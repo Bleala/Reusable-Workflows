@@ -1,4 +1,3 @@
-# .github/workflows/reusable-docker-lint.yml
 name: Reusable - Lint Dockerfile 🐳📄🔍
 run-name: Lint Dockerfile 🐳📄🔍
 

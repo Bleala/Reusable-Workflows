@@ -2,20 +2,6 @@
 version: 2
 
 updates:
-  # Configuration for Docker dependencies
-  - package-ecosystem: "docker"
-    directory: "/docker"
-    schedule:
-      # Options: "daily", "weekly", "monthly"
-      interval: "daily"
-    assignees:
-      - "Bleala"
-    target-branch: "main"
-    labels:
-      - "dependencies"
-      - "automated"
-      - "docker"
-
   # Configuration for GitHub Actions dependencies
   - package-ecosystem: "github-actions"
     directory: "/"

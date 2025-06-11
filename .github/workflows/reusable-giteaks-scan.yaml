@@ -5,9 +5,9 @@ on:
   workflow_call:
     inputs:
       ref:
-        description: 'Ref to checkout'
+        description: 'Specify the branch/tag to checkout (default: main)'
         required: true
-        default: ''
+        default: 'main'
         type: string
 
 jobs:

@@ -1,0 +1,46 @@
+name: Reusable - Gitleaks Scan 🔑🔍
+run-name: Gitleaks Scan 🔑🔍
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Ref to checkout'
+        required: true
+        default: ''
+        type: string
+    secrets:
+      github-token:
+        description: 'Token for GitHub Actions'
+        required: true
+
+jobs:
+  gitleaks-scan:
+    name: Gitleaks Scan 🔑🔍
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    permissions:
+      # for actions to fetch code
+      contents: read
+    steps:
+      # https://github.com/marketplace/actions/checkout
+      - name: Check Out Repository Code 🛒
+        id: checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.ref }}
+          # fetch all history
+          fetch-depth: 0
+
+      # https://github.com/marketplace/actions/gitleaks
+      - name: Scan Git Repository For Secrets 🔑🔍
+        id: gitleaks-scan
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.github-token }}
+          GITLEAKS_NOTIFY_USER_LIST: "@Bleala"
+          GITLEAKS_ENABLE_COMMENTS: true
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: true
+          GITLEAKS_ENABLE_SUMMARY: true

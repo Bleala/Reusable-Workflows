@@ -1,0 +1,98 @@
+name: Reusable - Build Test Container 🛠️ ✅ 🐳
+run-name: Build Test Container 🛠️ ✅ 🐳
+
+on:
+  workflow_call:
+    inputs:
+      buildcache_name:
+        description: 'Name of the build cache to use'
+        required: true
+        default: ''
+        type: string
+      image_name:
+        description: 'Name of the container image to build'
+        required: true
+        default: ''
+        type: string
+      image_tag:
+        description: 'Tag for the container image to build'
+        required: false
+        default: 'ci-container-build'
+        type: string
+      platforms:
+        description: 'Platforms to build for (comma-separated, e.g., linux/amd64,linux/arm64)'
+        required: true
+        default: ''
+        type: string
+      push:
+        description: 'Whether to push the built image (true/false)'
+        required: false
+        default: true
+        type: boolean
+      ref:
+        description: 'Ref to checkout'
+        required: true
+        default: ''
+        type: string
+      registry:
+        description: 'Registry to push to'
+        required: true
+        default: ''
+        type: string
+      username:
+        description: 'Username for the registry'
+        required: true
+        default: ''
+        type: string
+
+jobs:
+  build-test-container:
+    name: Build Test Container 🛠️ ✅ 🐳
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    permissions:
+      # for actions/checkout to fetch code
+      contents: read
+      # for docker/build-push-action to push the Container image to GitHub Container Registry
+      packages: write
+    steps:
+      # https://github.com/marketplace/actions/checkout
+      - name: Check Out Repository Code 🛒
+        id: checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.ref }}
+
+      # https://github.com/marketplace/actions/docker-setup-qemu
+      - name: Set Up QEMU 🛠️
+        id: setup-qemu
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+
+      # https://github.com/marketplace/actions/docker-setup-buildx
+      - name: Set Up Docker Buildx 🐳🧱
+        id: setup-buildx
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
+
+      # https://github.com/marketplace/actions/docker-login
+      - name: Login To GitHub Container Registry 🔑📦
+        id: docker-login-ghcr
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          registry: ${{ inputs.registry }}
+          username: ${{ inputs.username }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # https://github.com/marketplace/actions/build-and-push-docker-images
+      - name: Build Docker Image For Validation And Scanning 🏗️🔬
+        id: build-and-push
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: ./docker
+          platforms: ${{ inputs.platforms }}
+          push: ${{ inputs.push }}
+          tags: ${{ inputs.registry }}/${{ inputs.username }}/${{ inputs.image_name }}:${{ inputs.image_tag }}
+          cache-from: type=registry,ref=${{ inputs.registry }}/${{ inputs.username }}/${{ inputs.buildcache_name }}:buildcache
+          cache-to: type=registry,ref=${{ inputs.registry }}/${{ inputs.username }}/${{ inputs.buildcache_name }}:buildcache,mode=max
+

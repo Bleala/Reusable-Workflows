@@ -4,7 +4,7 @@ run-name: Lint Shell Scripts 📜🔍
 on:
   workflow_call:
     inputs:
-      exclude-paths:
+      exclude_paths:
         description: 'Paths to exclude from Shell Scripts linting'
         required: false
         default: 'LICENSE,docker/Dockerfile'
@@ -38,4 +38,4 @@ jobs:
         id: shell-linter
         uses: Azbagheri/shell-linter@30a9cf3f6cf25c08fc98f10d7dc4167f7b5c0c00 # v0.8.0
         with:
-          exclude-paths: ${{ inputs.exclude-paths }}
+          exclude-paths: ${{ inputs.exclude_paths }}

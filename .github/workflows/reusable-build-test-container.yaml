@@ -72,7 +72,7 @@ jobs:
 
       # Determine if the image should be pushed or not
       - name: Determine Push Condition 💡
-        id: push_decision
+        id: push-decision
         run: |
           # This condition checks two things:
           # 1. Was pushing requested via the 'push' input?
@@ -99,7 +99,7 @@ jobs:
       - name: Login To GitHub Container Registry 🔑📦
         id: docker-login-ghcr
         uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
-        if: ${{ steps.push_decision.outputs.do_push == 'true' }}
+        if: ${{ steps.push-decision.outputs.do_push == 'true' }}
         with:
           registry: ${{ inputs.registry }}
           username: ${{ inputs.username }}
@@ -112,7 +112,7 @@ jobs:
         with:
           context: ./docker
           platforms: ${{ inputs.platforms }}
-          push: ${{ steps.push_decision.outputs.do_push == 'true' }}
+          push: ${{ steps.push-decision.outputs.do_push == 'true' }}
           tags: ${{ inputs.registry }}/${{ inputs.username }}/${{ inputs.image_name }}:${{ inputs.image_tag }}
           cache-from: type=registry,ref=${{ inputs.registry }}/${{ inputs.username }}/${{ inputs.buildcache_name }}:${{ inputs.buildcache_tag }}
           cache-to: type=registry,ref=${{ inputs.registry }}/${{ inputs.username }}/${{ inputs.buildcache_name }}:${{ inputs.buildcache_tag }},mode=max

@@ -70,6 +70,21 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
 
+      # Determine if the image should be pushed or not
+      - name: Determine Push Condition 💡
+        id: push_decision
+        run: |
+          # This condition checks two things:
+          # 1. Was pushing requested via the 'push' input?
+          # 2. Is this NOT a pull request from an external fork?
+          # "do_push" is set to "true" only if both conditions are met.
+          if [[ "${{ inputs.push }}" == "true" && ("${{ github.event_name }}" != "pull_request" || "${{ github.event.pull_request.head.repo.full_name }}" == "${{ github.repository }}") ]]
+          then
+            echo "do_push=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "do_push=false" >> "$GITHUB_OUTPUT"
+          fi
+
       # https://github.com/marketplace/actions/docker-setup-qemu
       - name: Set Up QEMU 🛠️
         id: setup-qemu
@@ -84,6 +99,7 @@ jobs:
       - name: Login To GitHub Container Registry 🔑📦
         id: docker-login-ghcr
         uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
+        if: ${{ steps.push_decision.outputs.do_push == 'true' }}
         with:
           registry: ${{ inputs.registry }}
           username: ${{ inputs.username }}
@@ -96,7 +112,7 @@ jobs:
         with:
           context: ./docker
           platforms: ${{ inputs.platforms }}
-          push: ${{ inputs.push }}
+          push: ${{ steps.push_decision.outputs.do_push == 'true' }}
           tags: ${{ inputs.registry }}/${{ inputs.username }}/${{ inputs.image_name }}:${{ inputs.image_tag }}
           cache-from: type=registry,ref=${{ inputs.registry }}/${{ inputs.username }}/${{ inputs.buildcache_name }}:${{ inputs.buildcache_tag }}
           cache-to: type=registry,ref=${{ inputs.registry }}/${{ inputs.username }}/${{ inputs.buildcache_name }}:${{ inputs.buildcache_tag }},mode=max

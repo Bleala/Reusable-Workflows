@@ -47,6 +47,13 @@ jobs:
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: true
           GITLEAKS_ENABLE_SUMMARY: true
 
+      # Load PR context for sarif upload
+      - name: Fetch PR Merge Ref for Code Scanning
+        id: get-pr-context
+        if: ${{ github.event_name == 'pull_request' }}
+        run: |
+          git fetch origin refs/pull/${{ github.event.pull_request.number }}/merge
+
       # https://github.com/github/codeql-action
       # https://github.com/github/codeql-action/blob/main/upload-sarif/action.yml
       - name: Upload Gitleaks Scan Results To GitHub Security Tab 🛡️⬆️

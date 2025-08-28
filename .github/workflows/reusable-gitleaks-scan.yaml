@@ -47,6 +47,13 @@ jobs:
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: true
           GITLEAKS_ENABLE_SUMMARY: true
 
+      # Change tool name from 'gitleaks' to 'Gitleaks'
+      - name: Capitalize Gitleaks Tool Name in SARIF Report
+        id: capitalize-tool-name
+        if: always()
+        run: |
+          sed -i 's/"name": "gitleaks"/"name": "Gitleaks"/' results.sarif
+
       # https://github.com/github/codeql-action
       # https://github.com/github/codeql-action/blob/main/upload-sarif/action.yml
       - name: Upload Gitleaks Scan Results To GitHub Security Tab 🛡️⬆️

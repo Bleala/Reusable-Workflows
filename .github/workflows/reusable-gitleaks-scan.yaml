@@ -24,6 +24,8 @@ jobs:
       pull-requests: write
       # for artifacts upload
       security-events: write
+      # only required for a private repository by github/codeql-action/upload-sarif to get the Action run status
+      # actions: read
     steps:
       # https://github.com/marketplace/actions/checkout
       - name: Check Out Repository Code 🛒
@@ -44,3 +46,12 @@ jobs:
           GITLEAKS_ENABLE_COMMENTS: true
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: true
           GITLEAKS_ENABLE_SUMMARY: true
+
+      # https://github.com/github/codeql-action
+      # https://github.com/github/codeql-action/blob/main/upload-sarif/action.yml
+      - name: Upload Gitleaks Scan Results To GitHub Security Tab 🛡️⬆️
+        id: upload-gitleaks-results
+        uses: github/codeql-action/upload-sarif@3c3833e0f8c1c83d449a7478aa59c036a9165498 # v3.29.11
+        if: always()
+        with:
+          sarif_file: gitleaks-results.sarif

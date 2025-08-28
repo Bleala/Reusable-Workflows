@@ -49,9 +49,9 @@ jobs:
 
       # https://github.com/github/codeql-action
       # https://github.com/github/codeql-action/blob/main/upload-sarif/action.yml
-      - name: Upload Gitleaks Scan Results To GitHub Security Tab 🛡️⬆️
-        id: upload-gitleaks-results
-        uses: github/codeql-action/upload-sarif@3c3833e0f8c1c83d449a7478aa59c036a9165498 # v3.29.11
-        if: always()
-        with:
-          sarif_file: results.sarif
+      # - name: Upload Gitleaks Scan Results To GitHub Security Tab 🛡️⬆️
+      #   id: upload-gitleaks-results
+      #   uses: github/codeql-action/upload-sarif@3c3833e0f8c1c83d449a7478aa59c036a9165498 # v3.29.11
+      #   if: always()
+      #   with:
+      #     sarif_file: results.sarif

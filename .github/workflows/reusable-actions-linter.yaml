@@ -59,4 +59,3 @@ jobs:
           online-audits: true
           token: ${{ secrets.GITHUB_TOKEN }}
           advanced-security: true
-          color: true

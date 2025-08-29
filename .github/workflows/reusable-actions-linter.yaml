@@ -43,8 +43,8 @@ jobs:
         with:
           matcher: true
           files: .github/workflows/*.yaml, .gitea/workflows/*.yaml
-          group-results: true
-          fail-on-errors: true
+          group-result: true
+          fail-on-error: true
           shellcheck: true
           pyflakes: true
           cache: true

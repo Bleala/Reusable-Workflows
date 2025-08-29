@@ -13,6 +13,11 @@ on:
         required: false
         default: 'buildcache'
         type: string
+      docker_context:
+        description: 'Path to the Docker build context.'
+        required: false
+        default: './docker'
+        type: string
       image_name:
         description: 'Name of the container image to build'
         required: true
@@ -115,7 +120,7 @@ jobs:
         id: build-and-push
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
-          context: ./docker
+          context: ${{ inputs.docker_context }}
           platforms: ${{ inputs.platforms }}
           push: ${{ steps.push-decision.outputs.do_push == 'true' }}
           tags: ${{ inputs.registry }}/${{ inputs.username }}/${{ inputs.image_name }}:${{ inputs.image_tag }}

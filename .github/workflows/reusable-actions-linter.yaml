@@ -8,6 +8,11 @@ on:
         description: 'Ref to checkout.'
         required: true
         type: string
+      workflow_files:
+        description: 'Glob pattern for workflow files to lint.'
+        required: false
+        default: '.github/workflows/*.yaml,.gitea/workflows/*.yaml'
+        type: string
     secrets:
       GITHUB_WORKFLOW_TOKEN:
         description: 'The GITHUB_TOKEN for authentication.'
@@ -47,7 +52,7 @@ jobs:
         uses: raven-actions/actionlint@3a24062651993d40fed1019b58ac6fbdfbf276cc # v2.0.1
         with:
           matcher: true
-          files: .github/workflows/*.yaml, .gitea/workflows/*.yaml
+          files: ${{ inputs.workflow_files }}
           group-result: true
           fail-on-error: true
           shellcheck: true

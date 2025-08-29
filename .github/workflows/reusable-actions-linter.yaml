@@ -5,9 +5,13 @@ on:
   workflow_call:
     inputs:
       ref:
-        description: 'Ref to checkout'
+        description: 'Ref to checkout.'
         required: true
         type: string
+    secrets:
+      GITHUB_TOKEN:
+        description: 'The GITHUB_TOKEN for authentication.'
+        required: true
 
 jobs:
   lint-actions:

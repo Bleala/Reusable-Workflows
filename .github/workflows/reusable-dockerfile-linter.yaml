@@ -36,7 +36,7 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
-          token: ${{ secrets.GITHUB_GITHUB_WORKFLOW_TOKENTOKEN }}
+          token: ${{ secrets.GITHUB_WORKFLOW_TOKEN }}
 
       # https://github.com/marketplace/actions/hadolint-action
       - name: Lint Dockerfile 🐳📄🔍

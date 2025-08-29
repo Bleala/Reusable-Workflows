@@ -3,6 +3,10 @@ run-name: Draft Release Notes 📝🎉
 
 on:
   workflow_call:
+    secrets:
+      GITHUB_WORKFLOW_TOKEN:
+        description: 'The GITHUB_TOKEN for authentication.'
+        required: true
 
 jobs:
   draft-release-notes:
@@ -24,4 +28,4 @@ jobs:
         id: release-drafter
         uses: release-drafter/release-drafter@b1476f6e6eb133afa41ed8589daba6dc69b4d3f5 # v6.1.0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_WORKFLOW_TOKEN }}

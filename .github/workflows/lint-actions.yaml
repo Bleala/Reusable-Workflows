@@ -34,4 +34,4 @@ jobs:
       # only required for a private repository by zizmorcore/zizmor-action to get the Action run status
       actions: read
     secrets:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_WORKFLOW_TOKEN: ${{ secrets.GITHUB_TOKEN }}

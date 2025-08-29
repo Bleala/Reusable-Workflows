@@ -17,6 +17,10 @@ on:
         description: 'Username for the registry'
         required: true
         type: string
+    secrets:
+      GITHUB_WORKFLOW_TOKEN:
+        description: 'The GITHUB_TOKEN for authentication.'
+        required: true
 
 jobs:
   cleanup-ci-container-build-tag:
@@ -37,7 +41,7 @@ jobs:
         uses: dataaxiom/ghcr-cleanup-action@cd0cdb900b5dbf3a6f2cc869f0dbb0b8211f50c4 # v1.0.16
         if: always()
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_WORKFLOW_TOKEN }}
           owner: ${{ inputs.username }}
           packages: ${{ inputs.image_name }}
           delete-tags: ${{ inputs.image_tag }}

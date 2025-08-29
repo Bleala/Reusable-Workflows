@@ -9,7 +9,7 @@ on:
         required: true
         type: string
     secrets:
-      GITHUB_TOKEN:
+      GITHUB_WORKFLOW_TOKEN:
         description: 'The GITHUB_TOKEN for authentication.'
         required: true
 
@@ -38,7 +38,7 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_WORKFLOW_TOKEN }}
 
       # https://github.com/marketplace/actions/actionlint
       - name: Run Actionlint ✍️
@@ -53,7 +53,7 @@ jobs:
           shellcheck: true
           pyflakes: true
           cache: true
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.GITHUB_WORKFLOW_TOKEN }}
 
       # https://github.com/marketplace/actions/zizmor-action
       - name: Run Zizmor 🛡️
@@ -62,5 +62,5 @@ jobs:
         uses: zizmorcore/zizmor-action@5ca5fc7a4779c5263a3ffa0e1f693009994446d1 # v0.1.2
         with:
           online-audits: true
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_WORKFLOW_TOKEN }}
           advanced-security: true

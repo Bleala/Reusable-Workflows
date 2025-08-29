@@ -43,6 +43,10 @@ on:
         description: 'Username for the registry'
         required: true
         type: string
+    secrets:
+      GITHUB_WORKFLOW_TOKEN:
+        description: 'The GITHUB_TOKEN for authentication.'
+        required: true
 
 jobs:
   build-test-container:
@@ -64,7 +68,7 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_WORKFLOW_TOKEN }}
 
       # Determine if the image should be pushed or not
       - name: Determine Push Condition 💡
@@ -99,7 +103,7 @@ jobs:
         with:
           registry: ${{ inputs.registry }}
           username: ${{ inputs.username }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ secrets.GITHUB_WORKFLOW_TOKEN }}
 
       # https://github.com/marketplace/actions/build-and-push-docker-images
       - name: Build Docker Image For Validation And Scanning 🏗️🔬

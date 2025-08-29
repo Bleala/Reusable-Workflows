@@ -9,6 +9,10 @@ on:
         required: false
         default: 'main'
         type: string
+    secrets:
+      GITHUB_WORKFLOW_TOKEN:
+        description: 'The GITHUB_TOKEN for authentication.'
+        required: true
 
 jobs:
   gitleaks-scan:
@@ -36,14 +40,14 @@ jobs:
           # fetch all history
           fetch-depth: 0
           persist-credentials: false
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_WORKFLOW_TOKEN }}
 
       # https://github.com/marketplace/actions/gitleaks
       - name: Scan Git Repository For Secrets 🔑🔍
         id: gitleaks-scan
         uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_WORKFLOW_TOKEN }}
           GITLEAKS_NOTIFY_USER_LIST: "@Bleala"
           GITLEAKS_ENABLE_COMMENTS: true
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: true
@@ -64,4 +68,4 @@ jobs:
         if: always()
         with:
           sarif_file: results.sarif
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_WORKFLOW_TOKEN }}

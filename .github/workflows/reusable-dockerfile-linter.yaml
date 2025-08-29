@@ -13,6 +13,10 @@ on:
         description: 'Ref to checkout'
         required: true
         type: string
+    secrets:
+      GITHUB_WORKFLOW_TOKEN:
+        description: 'The GITHUB_TOKEN for authentication.'
+        required: true
 
 jobs:
   lint-dockerfile:
@@ -32,7 +36,7 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_GITHUB_WORKFLOW_TOKENTOKEN }}
 
       # https://github.com/marketplace/actions/hadolint-action
       - name: Lint Dockerfile 🐳📄🔍

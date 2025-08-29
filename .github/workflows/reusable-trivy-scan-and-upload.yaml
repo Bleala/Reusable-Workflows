@@ -21,6 +21,10 @@ on:
         description: 'Username for the registry'
         required: true
         type: string
+    secrets:
+      GITHUB_WORKFLOW_TOKEN:
+        description: 'The GITHUB_TOKEN for authentication.'
+        required: true
 
 jobs:
   trivy-scan-and-upload:
@@ -59,4 +63,4 @@ jobs:
         if: always()
         with:
           sarif_file: trivy-results.sarif
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_WORKFLOW_TOKEN }}

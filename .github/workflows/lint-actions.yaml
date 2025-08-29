@@ -26,7 +26,6 @@ jobs:
     uses: Bleala/Reusable-Workflows/.github/workflows/reusable-actions-linter.yaml@main
     with:
       ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source || github.ref }}
-    secrets: inherit
     permissions:
       # for actions/checkout to fetch code
       contents: read
@@ -34,3 +33,5 @@ jobs:
       security-events: write
       # only required for a private repository by zizmorcore/zizmor-action to get the Action run status
       actions: read
+    secrets:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

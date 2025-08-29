@@ -36,6 +36,7 @@ jobs:
           # fetch all history
           fetch-depth: 0
           persist-credentials: false
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       # https://github.com/marketplace/actions/gitleaks
       - name: Scan Git Repository For Secrets 🔑🔍
@@ -63,3 +64,4 @@ jobs:
         if: always()
         with:
           sarif_file: results.sarif
+          token: ${{ secrets.GITHUB_TOKEN }}

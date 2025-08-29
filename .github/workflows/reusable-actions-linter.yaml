@@ -34,6 +34,7 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       # https://github.com/marketplace/actions/actionlint
       - name: Run Actionlint ✍️

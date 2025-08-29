@@ -1,0 +1,29 @@
+name: Reusable - Validate Pull Requests 🏷️✅
+run-name: Validate Pull Requests 🏷️✅
+
+on:
+  workflow_call:
+    secrets:
+      GITHUB_WORKFLOW_TOKEN:
+        description: 'The GITHUB_TOKEN for authentication.'
+        required: true
+
+jobs:
+  validate-pull-requests:
+    name: Validate Pull Request Title 🏷️✅
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    permissions:
+      # required to read pull requests
+      pull-requests: read
+    steps:
+      # https://github.com/marketplace/actions/semantic-pull-request
+      - name: Lint Pull Request Title ✅
+        id: lint-pull-requests
+        uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_WORKFLOW_TOKEN }}
+        with:
+          requireScope:: false

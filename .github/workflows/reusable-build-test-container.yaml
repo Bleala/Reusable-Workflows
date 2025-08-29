@@ -73,12 +73,17 @@ jobs:
       # Determine if the image should be pushed or not
       - name: Determine Push Condition 💡
         id: push-decision
+        env:
+          INPUT_PUSH: ${{ inputs.push }}
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
         run: |
           # This condition checks two things:
           # 1. Was pushing requested via the 'push' input?
           # 2. Is this NOT a pull request from an external fork?
           # "do_push" is set to "true" only if both conditions are met.
-          if [[ "${{ inputs.push }}" == "true" && ("${{ github.event_name }}" != "pull_request" || "${{ github.event.pull_request.head.repo.full_name }}" == "${{ github.repository }}") ]]
+          if [[ "${INPUT_PUSH}" == "true" && ("${EVENT_NAME}" != "pull_request" || "${HEAD_REPO}" == "${BASE_REPO}") ]]
           then
             echo "do_push=true" >> "$GITHUB_OUTPUT"
           else

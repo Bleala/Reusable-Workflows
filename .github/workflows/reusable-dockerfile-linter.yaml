@@ -31,6 +31,7 @@ jobs:
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           ref: ${{ inputs.ref }}
+          persist-credentials: false
 
       # https://github.com/marketplace/actions/hadolint-action
       - name: Lint Dockerfile 🐳📄🔍

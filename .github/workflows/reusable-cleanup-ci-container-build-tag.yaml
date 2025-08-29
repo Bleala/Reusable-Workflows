@@ -7,7 +7,6 @@ on:
       image_name:
         description: 'Name of the container image to build'
         required: true
-        default: ''
         type: string
       image_tag:
         description: 'Tag for the container image to build'
@@ -17,7 +16,6 @@ on:
       username:
         description: 'Username for the registry'
         required: true
-        default: ''
         type: string
 
 jobs:

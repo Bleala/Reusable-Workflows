@@ -7,7 +7,6 @@ on:
       buildcache_name:
         description: 'Name of the build cache to use'
         required: true
-        default: ''
         type: string
       buildcache_tag:
         description: 'Tag of the build cache to use'
@@ -17,7 +16,6 @@ on:
       image_name:
         description: 'Name of the container image to build'
         required: true
-        default: ''
         type: string
       image_tag:
         description: 'Tag for the container image to build'
@@ -27,7 +25,6 @@ on:
       platforms:
         description: 'Platforms to build for (comma-separated, e.g., linux/amd64,linux/arm64)'
         required: true
-        default: ''
         type: string
       push:
         description: 'Whether to push the built image (true/false)'
@@ -37,17 +34,14 @@ on:
       ref:
         description: 'Ref to checkout'
         required: true
-        default: ''
         type: string
       registry:
         description: 'Registry to push to'
         required: true
-        default: ''
         type: string
       username:
         description: 'Username for the registry'
         required: true
-        default: ''
         type: string
 
 jobs:

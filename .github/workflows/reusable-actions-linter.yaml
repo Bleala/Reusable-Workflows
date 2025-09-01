@@ -66,6 +66,9 @@ jobs:
         if: ${{ matrix.linter == 'Zizmor' }}
         uses: zizmorcore/zizmor-action@5ca5fc7a4779c5263a3ffa0e1f693009994446d1 # v0.1.2
         with:
+          inputs: |
+            .github/
+            .gitea/
           online-audits: true
           token: ${{ secrets.GITHUB_WORKFLOW_TOKEN }}
           advanced-security: true

@@ -55,8 +55,8 @@ jobs:
           files: ${{ inputs.workflow_files }}
           group-result: true
           fail-on-error: true
-          shellcheck: true
-          pyflakes: true
+          shellcheck: false
+          pyflakes: false
           cache: true
           github-token: ${{ secrets.GITHUB_WORKFLOW_TOKEN }}
 

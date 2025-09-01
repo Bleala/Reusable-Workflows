@@ -1,17 +1,20 @@
-name: Reusable - GHCR Clean Up 'ci-container-build' Image Tag 🧹🏷️
-run-name: GHCR Clean Up 'ci-container-build' Image Tag 🧹🏷️
+name: Reusable - GHCR Clean Up Image Tag 🧹🏷️
+run-name: GHCR Clean Up Image Tag 🧹🏷️
 
 on:
   workflow_call:
     inputs:
+      cleanup_strategy:
+        description: 'The cleanup strategy to use: "buildcache" or "ci-container-build"'
+        required: true
+        type: string
       image_name:
-        description: 'Name of the container image to build'
+        description: 'Name of the container image package to clean up'
         required: true
         type: string
       image_tag:
-        description: 'Tag for the container image to build'
-        required: false
-        default: 'ci-container-build'
+        description: 'The tag to be deleted or excluded'
+        required: true
         type: string
       username:
         description: 'Username for the registry'
@@ -23,8 +26,8 @@ on:
         required: true
 
 jobs:
-  cleanup-ci-container-build-tag:
-    name: GHCR Clean Up 'ci-container-build' Image Tag 🧹🏷️
+  ghcr-cleanup:
+    name: GHCR Clean Up 🧹🏷️
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -36,10 +39,22 @@ jobs:
       packages: write
     steps:
       # https://github.com/marketplace/actions/ghcr-io-cleanup-action
+      - name: GHCR Clean Up 'buildcache' Image Tag 🧹🏷️
+        id: ghcr-clean-up-buildcache
+        uses: dataaxiom/ghcr-cleanup-action@cd0cdb900b5dbf3a6f2cc869f0dbb0b8211f50c4 # v1.0.16
+        if: ${{ inputs.cleanup_strategy == 'buildcache' }}
+        with:
+          token: ${{ secrets.GITHUB_WORKFLOW_TOKEN }}
+          owner: ${{ inputs.username }}
+          packages: ${{ inputs.image_name }}
+          exclude-tags: ${{ inputs.image_tag }}
+          keep-n-untagged: 20
+
+      # https://github.com/marketplace/actions/ghcr-io-cleanup-action
       - name: GHCR Clean Up 'ci-container-build' Image Tag 🧹🏷️
         id: ghcr-clean-up-ci-container-build
         uses: dataaxiom/ghcr-cleanup-action@cd0cdb900b5dbf3a6f2cc869f0dbb0b8211f50c4 # v1.0.16
-        if: always()
+        if: ${{ inputs.cleanup_strategy == 'ci-container-build' }}
         with:
           token: ${{ secrets.GITHUB_WORKFLOW_TOKEN }}
           owner: ${{ inputs.username }}

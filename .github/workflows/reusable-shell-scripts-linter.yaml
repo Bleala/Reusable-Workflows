@@ -4,6 +4,11 @@ run-name: Lint Shell Scripts 📜🔍
 on:
   workflow_call:
     inputs:
+      exclude_issues:
+        description: 'Issues to exclude from Shell Scripts linting'
+        required: false
+        default: ''
+        type: string
       exclude_paths:
         description: 'Paths to exclude from Shell Scripts linting'
         required: false
@@ -44,3 +49,4 @@ jobs:
         uses: Azbagheri/shell-linter@30a9cf3f6cf25c08fc98f10d7dc4167f7b5c0c00 # v0.8.0
         with:
           exclude-paths: ${{ inputs.exclude_paths }}
+          exclude-issues: ${{ inputs.exclude_issues }}

@@ -4,10 +4,20 @@ run-name: Lint Actions 🧐📜🔍
 on:
   workflow_call:
     inputs:
+      pyflakes_enabled:
+        description: 'Enable pyflakes for actionlint (true/false)'
+        required: false
+        default: false
+        type: boolean
       ref:
         description: 'Ref to checkout.'
         required: true
         type: string
+      shellcheck_enabled:
+        description: 'Enable shellcheck for actionlint (true/false)'
+        required: false
+        default: true
+        type: boolean
       workflow_files:
         description: 'Glob pattern for workflow files to lint.'
         required: false
@@ -55,8 +65,8 @@ jobs:
           files: ${{ inputs.workflow_files }}
           group-result: true
           fail-on-error: true
-          shellcheck: false
-          pyflakes: false
+          shellcheck: ${{ inputs.shellcheck_enabled }}
+          pyflakes:  ${{ inputs.pyflakes_enabled }}
           cache: true
           github-token: ${{ secrets.GITHUB_WORKFLOW_TOKEN }}
 

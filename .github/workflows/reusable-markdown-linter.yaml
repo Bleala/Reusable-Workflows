@@ -12,7 +12,7 @@ on:
       fix:
         description: 'Fix supported issues automatically'
         required: false
-        default: true
+        default: false
         type: boolean
       globs:
         description: 'Glob expression(s) of files to lint'

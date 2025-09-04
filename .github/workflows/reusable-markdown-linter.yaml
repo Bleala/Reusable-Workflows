@@ -7,7 +7,7 @@ on:
       config:
         description: 'Path to markdownlint config file'
         required: false
-        default: '.github/markdownlint.yaml'
+        default: '.github/.markdownlint-cli2.yaml'
         type: string
       fix:
         description: 'Fix supported issues automatically'

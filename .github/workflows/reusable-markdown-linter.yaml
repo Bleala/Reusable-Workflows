@@ -4,6 +4,11 @@ run-name: Lint Markdown Files 📝🔍
 on:
   workflow_call:
     inputs:
+      config:
+        description: 'Path to markdownlint config file'
+        required: false
+        default: '.github/markdownlint.yaml'
+        type: string
       fix:
         description: 'Fix supported issues automatically'
         required: false
@@ -53,6 +58,7 @@ jobs:
         id: markdown-linter
         uses: DavidAnson/markdownlint-cli2-action@992badcdf24e3b8eb7e87ff9287fe931bcb00c6e # v20.0.0
         with:
+          config: ${{ inputs.config }}
           fix: ${{ inputs.fix }}
           globs: ${{ inputs.globs }}
           separator: ${{ inputs.separator }}

@@ -1,0 +1,58 @@
+name: Reusable - Lint Markdown Files 📝🔍
+run-name: Lint Markdown Files 📝🔍
+
+on:
+  workflow_call:
+    inputs:
+      fix:
+        description: 'Fix supported issues automatically'
+        required: false
+        default: true
+        type: boolean
+      globs:
+        description: 'Glob expression(s) of files to lint'
+        required: false
+        default: '**/*.md'
+        type: string
+      ref:
+        description: 'Ref to checkout'
+        required: true
+        type: string
+      separator:
+        description: 'String to use as a separator for the globs input'
+        required: false
+        default: ','
+        type: string
+    secrets:
+      GITHUB_WORKFLOW_TOKEN:
+        description: 'The GITHUB_TOKEN for authentication.'
+        required: true
+
+jobs:
+  lint-markdown-files:
+    name: Lint Markdown Files 📝🔍
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    permissions:
+      # for actions/checkout to fetch code
+      contents: read
+    steps:
+      # https://github.com/marketplace/actions/checkout
+      - name: Check Out Repository Code 🛒
+        id: checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+          token: ${{ secrets.GITHUB_WORKFLOW_TOKEN }}
+
+      # https://github.com/marketplace/actions/markdownlint-cli2-action
+      - name: Lint Markdown Files 📝🔍
+        id: markdown-linter
+        uses: DavidAnson/markdownlint-cli2-action@992badcdf24e3b8eb7e87ff9287fe931bcb00c6e # v20.0.0
+        with:
+          fix: ${{ inputs.fix }}
+          globs: ${{ inputs.globs }}
+          separator: ${{ inputs.separator }}

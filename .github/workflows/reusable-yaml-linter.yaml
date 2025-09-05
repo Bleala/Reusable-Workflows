@@ -1,0 +1,52 @@
+---
+name: Reusable - Lint YAML Files 📏🕵️🔍
+run-name: Lint YAML Files 📏🕵️🔍
+
+on:
+  workflow_call:
+    inputs:
+      config:
+        description: 'Path to .yamllint config file'
+        required: false
+        default: '.github/.yamllint'
+        type: string
+      ref:
+        description: 'Ref to checkout'
+        required: true
+        type: string
+    secrets:
+      GITHUB_WORKFLOW_TOKEN:
+        description: 'The GITHUB_TOKEN for authentication.'
+        required: true
+
+jobs:
+  lint-yaml-files:
+    name: Lint YAML Files 📏🕵️🔍
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    permissions:
+      # for actions/checkout to fetch code
+      contents: read
+    steps:
+      # https://github.com/marketplace/actions/checkout
+      - name: Check Out Repository Code 🛒
+        id: checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+          token: ${{ secrets.GITHUB_WORKFLOW_TOKEN }}
+
+      # Install yamllint on runner
+      - name: Install Yamllint 📦🛠️
+        id: install-yamllint
+        run: |
+          pip install yamllint
+
+      # https://yamllint.readthedocs.io/en/latest/integration.html#integration-with-github-actions
+      - name: Lint YAML Files 📏🕵️🔍
+        id: yaml-linter
+        run: |
+          yamllint -c ${{ inputs.config }} .

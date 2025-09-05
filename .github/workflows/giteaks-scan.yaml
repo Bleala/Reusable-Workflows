@@ -1,3 +1,4 @@
+---
 name: Gitleaks Scan 🔑🔍
 run-name: Gitleaks Scan 🔑🔍
 
@@ -6,7 +7,7 @@ on:
     branches:
       - '**' # all branches
   pull_request:
-    branches: 
+    branches:
       - main
       - dev
   schedule:

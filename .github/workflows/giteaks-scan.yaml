@@ -18,7 +18,7 @@ on:
         description: 'Specify the branch/tag to check for secrets (default: main)'
         required: false
         default: 'main'
-        type: string 
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

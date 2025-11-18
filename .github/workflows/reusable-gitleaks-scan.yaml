@@ -35,7 +35,7 @@ jobs:
       # https://github.com/marketplace/actions/checkout
       - name: Check Out Repository Code 🛒
         id: checkout
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           ref: ${{ inputs.ref }}
           # fetch all history
@@ -65,7 +65,7 @@ jobs:
       # https://github.com/github/codeql-action/blob/main/upload-sarif/action.yml
       - name: Upload Gitleaks Scan Results To GitHub Security Tab 🛡️⬆️
         id: upload-gitleaks-results
-        uses: github/codeql-action/upload-sarif@3599b3baa15b485a2e49ef411a7a4bb2452e7f93 # v3.30.5
+        uses: github/codeql-action/upload-sarif@014f16e7ab1402f30e7c3329d33797e7948572db # v4.31.3
         if: always()
         with:
           sarif_file: results.sarif

@@ -45,7 +45,7 @@ jobs:
       # https://github.com/marketplace/actions/aqua-security-trivy
       - name: Scan Image For Vulnerabilities 🛡️🔍
         id: trivy-scan
-        uses: aquasecurity/trivy-action@c1824fd6edce30d7ab345a9989de00bbd46ef284 # 0.34.0
+        uses: aquasecurity/trivy-action@97e0b3872f55f89b95b2f65b3dbab56962816478 # 0.34.2
         with:
           image-ref: ${{ inputs.registry }}/${{ inputs.username }}/${{ inputs.image_name }}:${{ inputs.image_tag }}
           format: sarif

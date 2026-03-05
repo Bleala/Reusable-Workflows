@@ -125,7 +125,7 @@ jobs:
       # https://github.com/marketplace/actions/docker-setup-qemu
       - name: Set Up QEMU 🛠️
         id: setup-qemu
-        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
 
       # https://github.com/marketplace/actions/docker-setup-buildx
       - name: Set Up Docker Buildx 🐳🧱
@@ -135,7 +135,7 @@ jobs:
       # https://github.com/marketplace/actions/docker-login
       - name: Login To GitHub Container Registry 🔑📦
         id: docker-login-ghcr
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
         if: ${{ steps.push-decision.outputs.do_push == 'true' }}
         with:
           registry: ${{ inputs.registry }}

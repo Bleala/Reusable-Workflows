@@ -45,7 +45,7 @@ jobs:
       # https://github.com/marketplace/actions/aqua-security-trivy
       - name: Scan Image For Vulnerabilities 🛡️🔍
         id: trivy-scan
-        uses: aquasecurity/trivy-action@97e0b3872f55f89b95b2f65b3dbab56962816478 # 0.34.2
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
         with:
           image-ref: ${{ inputs.registry }}/${{ inputs.username }}/${{ inputs.image_name }}:${{ inputs.image_tag }}
           format: sarif
@@ -60,7 +60,7 @@ jobs:
       # https://github.com/github/codeql-action/blob/main/upload-sarif/action.yml
       - name: Upload Trivy Scan Results To GitHub Security Tab 🛡️⬆️
         id: upload-trivy-results
-        uses: github/codeql-action/upload-sarif@c793b717bc78562f491db7b0e93a3a178b099162 # v4.32.5
+        uses: github/codeql-action/upload-sarif@0d579ffd059c29b07949a3cce3983f0780820c98 # v4.32.6
         if: always()
         with:
           sarif_file: trivy-results.sarif

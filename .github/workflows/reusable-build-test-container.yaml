@@ -153,4 +153,4 @@ jobs:
           push: ${{ steps.push-decision.outputs.do_push == 'true' }}
           tags: ${{ inputs.registry }}/${{ inputs.username }}/${{ inputs.image_name }}:${{ inputs.image_tag }}
           cache-from: type=registry,ref=${{ inputs.registry }}/${{ inputs.username }}/${{ inputs.buildcache_name }}:${{ inputs.buildcache_tag }}
-          cache-to: type=registry,ref=${{ inputs.registry }}/${{ inputs.username }}/${{ inputs.buildcache_name }}:${{ inputs.buildcache_tag }},mode=max
+          cache-to: type=registry,ref=${{ inputs.registry }}/${{ inputs.username }}/${{ inputs.buildcache_name }}:${{ inputs.buildcache_tag }},mode=max,image-manifest=true,oci-mediatypes=true

@@ -49,7 +49,7 @@ jobs:
           owner: ${{ inputs.username }}
           packages: ${{ inputs.image_name }}
           exclude-tags: ${{ inputs.image_tag }}
-          keep-n-untagged: 100
+          keep-n-untagged: 20
 
       # https://github.com/marketplace/actions/ghcr-io-cleanup-action
       - name: GHCR Clean Up 'ci-container-build' Image Tag 🧹🏷️

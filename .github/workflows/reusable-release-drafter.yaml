@@ -25,10 +25,19 @@ jobs:
     steps:
       # Drafts your next Release notes as Pull Requests are merged
       # https://github.com/marketplace/actions/release-drafter
+
+      - name: Autolabel Pull Requests 🏷️
+        if: github.event_name == 'pull_request'
+        id: autolabeler
+        uses: release-drafter/release-drafter/autolabeler@563bf132657a13ded0b01fcb723c5a58cdd824e2 # v7.2.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_WORKFLOW_TOKEN }}
+
       - name: Draft Release Notes 📝🎉
+        if: github.event_name == 'push'
         id: release-drafter
         uses: release-drafter/release-drafter@563bf132657a13ded0b01fcb723c5a58cdd824e2 # v7.2.1
         with:
-          commitish: ${{ github.event.pull_request.base.ref || github.ref_name }}
+          commitish: ${{ github.ref_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_WORKFLOW_TOKEN }}

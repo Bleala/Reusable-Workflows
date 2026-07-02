@@ -9,6 +9,8 @@ updates:
     schedule:
       # Options: "daily", "weekly", "monthly"
       interval: "daily"
+    cooldown:
+      default-days: 7
     assignees:
       - "Bleala"
     groups:

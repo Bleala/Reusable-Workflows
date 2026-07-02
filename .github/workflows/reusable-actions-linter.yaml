@@ -50,7 +50,7 @@ jobs:
       # https://github.com/marketplace/actions/checkout
       - name: Check Out Repository Code 🛒
         id: checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
@@ -60,7 +60,7 @@ jobs:
       - name: Run Actionlint ✍️
         id: actions-linter-actionlint
         if: ${{ matrix.linter == 'Actionlint' }}
-        uses: raven-actions/actionlint@205b530c5d9fa8f44ae9ed59f341a0db994aa6f8 # v2.1.2
+        uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2.2.0
         with:
           matcher: true
           files: ${{ inputs.workflow_files }}
@@ -75,7 +75,7 @@ jobs:
       - name: Run Zizmor 🛡️
         id: actions-linter-zizmor
         if: ${{ matrix.linter == 'Zizmor' }}
-        uses: zizmorcore/zizmor-action@5f14fd08f7cf1cb1609c1e344975f152c7ee938d # v0.5.6
+        uses: zizmorcore/zizmor-action@192e21d79ab29983730a13d1382995c2307fbcaa # v0.5.7
         with:
           online-audits: true
           token: ${{ secrets.GITHUB_WORKFLOW_TOKEN }}

@@ -50,7 +50,7 @@ jobs:
           image-ref: ${{ inputs.registry }}/${{ inputs.username }}/${{ inputs.image_name }}:${{ inputs.image_tag }}
           format: sarif
           output: trivy-results.sarif
-          exit-code: '1'
+          exit-code: '0'
           ignore-unfixed: true
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH'

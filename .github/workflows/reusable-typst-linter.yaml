@@ -25,8 +25,13 @@ on:
         required: false
         default: ''
         type: string
+      format_line_width:
+        description: 'Maximum line width for typstyle (--line-width), empty = typstyle default (80)'
+        required: false
+        default: ''
+        type: string
       format_paths:
-        description: 'Files or directories checked by typstyle'
+        description: 'Files, directories or glob expressions checked by typstyle'
         required: false
         default: '.'
         type: string
@@ -108,6 +113,29 @@ jobs:
               item="${item%"${item##*[![:space:]]}"}"
               if [ -n "$item" ]; then printf '%s\n' "$item"; fi
             done <<< "${1//"$SEPARATOR"/$'\n'}"
+          }
+
+          # Expand a list of glob expressions (split by $SEPARATOR), print each match once, NUL-separated.
+          # A literal path without wildcard is kept even if missing, the calling tool reports it.
+          expand_globs() {
+            local glob match
+            local -a globs matches
+            local -A seen=()
+            shopt -s globstar nullglob
+            mapfile -t globs < <(split "$1")
+            for glob in "${globs[@]}"; do
+              # Glob must expand here, so no quotes. Empty IFS keeps paths with spaces intact.
+              IFS=
+              # shellcheck disable=SC2206
+              matches=($glob)
+              unset IFS
+              for match in "${matches[@]}"; do
+                if [ -z "${seen[$match]:-}" ]; then
+                  seen[$match]=1
+                  printf '%s\0' "$match"
+                fi
+              done
+            done
           }
 
           # Escape values for workflow commands: data after "::", properties also ":" and ",".
@@ -200,27 +228,8 @@ jobs:
         run: |
           # shellcheck source=/dev/null
           source "$RUNNER_TEMP/typst-lint-lib.sh"
-          shopt -s globstar nullglob
 
-          files=()
-          declare -A seen=()
-          mapfile -t globs < <(split "$TYPST_FILES")
-          for glob in "${globs[@]}"; do
-            # Glob must expand here, so no quotes. Empty IFS keeps paths with spaces intact.
-            IFS=
-            # shellcheck disable=SC2206
-            matches=($glob)
-            unset IFS
-            # Overlapping globs: compile each file only once.
-            for match in "${matches[@]}"; do
-              if [ -z "${seen[$match]:-}" ]; then
-                seen[$match]=1
-                files+=("$match")
-              fi
-            done
-          done
-
-          # A literal path without wildcard stays in the list, typst reports it as missing.
+          mapfile -d '' -t files < <(expand_globs "$TYPST_FILES")
           if [ ${#files[@]} -eq 0 ]; then
             echo "::error::No Typst files match: $(esc_data "$TYPST_FILES")"
             exit 1
@@ -460,16 +469,86 @@ jobs:
           chmod +x "$RUNNER_TEMP/bin/typstyle"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
-      # Check formatting of Typst files with typstyle
+      # Check formatting of Typst files with typstyle, show the diff of every file that is not formatted
       - name: Check Typst Formatting 🎨🔍
         id: typstyle-check
         if: ${{ !cancelled() && steps.helpers.outcome == 'success' && steps.install-typstyle.outcome == 'success' }}
         env:
+          FORMAT_LINE_WIDTH: ${{ inputs.format_line_width }}
           FORMAT_PATHS: ${{ inputs.format_paths }}
           SEPARATOR: ${{ inputs.separator }}
         run: |
           # shellcheck source=/dev/null
           source "$RUNNER_TEMP/typst-lint-lib.sh"
           typstyle --version
-          mapfile -t paths < <(split "$FORMAT_PATHS")
-          typstyle --check "${paths[@]}"
+
+          mapfile -d '' -t paths < <(expand_globs "$FORMAT_PATHS")
+          if [ ${#paths[@]} -eq 0 ]; then
+            echo "::error::No files match format_paths: $(esc_data "$FORMAT_PATHS")"
+            exit 1
+          fi
+          printf 'Format check: %s\n' "${paths[@]}"
+
+          args=(--diff)
+          if [ -n "$FORMAT_LINE_WIDTH" ]; then
+            args+=(--line-width "$FORMAT_LINE_WIDTH")
+          fi
+
+          rc=0
+          output="$(typstyle "${args[@]}" "${paths[@]}" 2>&1)" || rc=$?
+
+          # The diff contains repository content, it must not run as workflow commands.
+          if [ -n "$output" ]; then
+            stop_token="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+            echo "::stop-commands::${stop_token}"
+            printf '%s\n' "$output"
+            echo "::${stop_token}::"
+          fi
+
+          # One annotation and table row per block of changed lines, at its line in the original file.
+          # A file starts with "--- file" directly followed by "+++ file" (a removed line "-- …" alone
+          # must not count), a hunk with "@@ -line,…"; context lines (" ") move the line counter and
+          # end a block, removed lines ("-") move it too, added lines ("+") do not. An empty line ends
+          # the diff of a file (empty context lines are " "), so the next "--- file" is never a change.
+          changes=()
+          file=""
+          previous=""
+          old_line=0
+          in_change=0
+          while IFS= read -r line; do
+            if [ -z "$line" ]; then
+              file=""
+              in_change=0
+            elif [[ $previous == "--- "* && $line == "+++ ${previous#--- }" ]]; then
+              file="${previous#--- }"
+              in_change=0
+            elif [[ -n $file && $line =~ ^@@\ -([0-9]+) ]]; then
+              old_line="${BASH_REMATCH[1]}"
+              in_change=0
+            elif [[ -n $file && ( $line == "-"* || $line == "+"* ) ]]; then
+              if [ "$in_change" -eq 0 ]; then
+                in_change=1
+                echo "::error file=$(esc_prop "$file"),line=${old_line}::Not formatted with typstyle, see the diff in the log"
+                changes+=("| $(md_location "$file" "$old_line") |")
+              fi
+              if [[ $line == "-"* ]]; then old_line=$((old_line + 1)); fi
+            elif [[ -n $file && $line == " "* ]]; then
+              old_line=$((old_line + 1))
+              in_change=0
+            fi
+            previous="$line"
+          done <<< "$output"
+
+          {
+            echo ""
+            echo "### Typst Formatting 🎨"
+            echo ""
+            echo "typstyle on ${#paths[@]} path(s): ${#changes[@]} unformatted section(s)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          summary_table "| Location |" "${changes[@]}"
+
+          if [ "$rc" -ne 0 ]; then
+            fix=(typstyle -i "${args[@]:1}" "<files>")
+            echo "::error::Typst files are not formatted, run: ${fix[*]}"
+            exit 1
+          fi

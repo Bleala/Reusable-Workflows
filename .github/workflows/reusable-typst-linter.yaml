@@ -437,8 +437,11 @@ jobs:
           fi
 
           # grep -Z ends the file name with NUL instead of ":", so paths may contain ":" themselves.
+          # Split "line:text" by hand, read with IFS=: would drop a trailing ":" of the text.
           matches=()
-          while IFS= read -r -d '' file && IFS=: read -r line text; do
+          while IFS= read -r -d '' file && IFS= read -r rest; do
+            line="${rest%%:*}"
+            text="${rest#*:}"
             echo "::warning file=$(esc_prop "$file"),line=${line}::Pattern match: $(esc_data "$text")"
             matches+=("| $(md_location "$file" "$line") | $(md_cell "${text:0:200}") |")
           done < <(git ls-files -z '*.typ' | xargs -0 -r grep -nZE -- "$WARN_PATTERN" /dev/null || true)

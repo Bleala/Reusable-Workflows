@@ -375,7 +375,7 @@ jobs:
                   ;;
               esac
               # One entry per line: BOM, CR and surrounding whitespace removed, empty lines dropped.
-              entries="$(jq -R -s 'gsub("^﻿"; "") | split("\n") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))' "$file")"
+              entries="$(jq -R -s 'gsub("^\ufeff"; "") | split("\n") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))' "$file")"
               if [ "$setting" = "hiddenFalsePositives" ]; then
                 entries="$(check_false_positives "$file")"
               fi

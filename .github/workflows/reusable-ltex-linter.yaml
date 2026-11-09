@@ -1,0 +1,502 @@
+---
+name: Reusable - Check Spelling with LTeX+ 📝🔍
+run-name: Check Spelling with LTeX+ 📝🔍
+
+on:
+  workflow_call:
+    inputs:
+      config_dir:
+        description: 'Directory with LTeX+ files named ltex.<setting>.<language>.txt (one entry per line, as the VS Code extension writes them), empty = none'
+        required: false
+        default: '.vscode'
+        type: string
+      enabled:
+        description: 'Code languages LTeX+ checks (e.g. typst,markdown), empty = LTeX+ default'
+        required: false
+        default: ''
+        type: string
+      fail_on_findings:
+        description: 'Fail the job if LTeX+ reports findings (default: report as warning annotations only)'
+        required: false
+        default: false
+        type: boolean
+      files:
+        description: 'Glob expression(s) of files to check'
+        required: false
+        default: '**/*.md'
+        type: string
+      language:
+        description: 'Default language (e.g. en-US, de-AT), magic comments in the files can switch it'
+        required: false
+        default: 'en-US'
+        type: string
+      ltex_sha256:
+        description: 'SHA256 of ltex-ls-plus-<version>-linux-x64.tar.gz, must match ltex_version'
+        required: false
+        default: '1e16df6c578dc76ff97d644445d126ba6fba5c2e8e174178ab86372652fd7612'
+        type: string
+      ltex_version:
+        description: 'ltex-ls-plus version (contains ltex-cli-plus)'
+        required: false
+        default: '18.7.0'
+        type: string
+      ref:
+        description: 'Ref to checkout'
+        required: true
+        type: string
+      separator:
+        description: 'String to use as a separator for the list inputs'
+        required: false
+        default: ','
+        type: string
+    secrets:
+      GITHUB_WORKFLOW_TOKEN:
+        description: 'The GITHUB_TOKEN for authentication.'
+        required: true
+
+jobs:
+  check-spelling:
+    name: Check Spelling with LTeX+ 📝🔍
+    runs-on: ubuntu-latest
+    # LanguageTool needs about a minute for a long document, more means something hangs
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    permissions:
+      # for actions/checkout to fetch code
+      contents: read
+    steps:
+      # Shared shell functions, every following run step sources this file
+      - name: Prepare Helper Functions 🧰
+        id: helpers
+        run: |
+          cat > "$RUNNER_TEMP/ltex-lint-lib.sh" <<'EOF'
+          # Literal "&" in ${var//pattern/replacement} (bash 5.2 would insert the match).
+          shopt -u patsub_replacement 2>/dev/null || true
+
+          # Split a list input at $SEPARATOR, trim whitespace, drop empty items (one item per line).
+          split() {
+            local item
+            while IFS= read -r item; do
+              item="${item#"${item%%[![:space:]]*}"}"
+              item="${item%"${item##*[![:space:]]}"}"
+              if [ -n "$item" ]; then printf '%s\n' "$item"; fi
+            done <<< "${1//"$SEPARATOR"/$'\n'}"
+          }
+
+          # Expand a list of glob expressions (split by $SEPARATOR), print each existing file once, NUL-separated.
+          expand_globs() {
+            local glob match
+            local -a globs matches
+            local -A seen=()
+            shopt -s globstar nullglob
+            mapfile -t globs < <(split "$1")
+            for glob in "${globs[@]}"; do
+              # Glob must expand here, so no quotes. Empty IFS keeps paths with spaces intact.
+              IFS=
+              # shellcheck disable=SC2206
+              matches=($glob)
+              unset IFS
+              # A literal path (no wildcard) that does not exist is most likely a typo, report it (stderr).
+              if [[ $glob != *[\*\?\[]* && ! -f $glob ]]; then
+                echo "::warning::File not found: $(esc_data "$glob")" >&2
+              fi
+              for match in "${matches[@]}"; do
+                if [ -f "$match" ] && [ -z "${seen[$match]:-}" ]; then
+                  seen[$match]=1
+                  printf '%s\0' "$match"
+                fi
+              done
+            done
+          }
+
+          # Escape values for workflow commands: data after "::", properties also ":" and ",".
+          esc_data() {
+            local v="${1//%/%25}"
+            v="${v//$'\r'/%0D}"
+            printf '%s' "${v//$'\n'/%0A}"
+          }
+          esc_prop() {
+            local v
+            v="$(esc_data "$1")"
+            v="${v//:/%3A}"
+            printf '%s' "${v//,/%2C}"
+          }
+
+          # Escape text for a Markdown table cell in the job summary.
+          md_cell() {
+            local v="${1//|/\\|}"
+            v="${v//</&lt;}"
+            v="${v//$'\r'/}"
+            printf '%s' "${v//$'\n'/ }"
+          }
+
+          # Location as Markdown link to file and line at the checked out commit,
+          # plain text for paths outside the repository (absolute or "../").
+          md_location() {
+            local file="$1" line="${2:-}" label url path
+            label="$(md_cell "$file")"
+            label="${label//\[/\\[}"
+            label="${label//\]/\\]}"
+            if [ -n "$line" ]; then label="${label}:${line}"; fi
+            if [[ $file == /* || $file == ../* || ! -e $file ]]; then
+              printf '%s' "$label"
+              return
+            fi
+            # Set MD_COMMIT once before a loop, md_location usually runs in a subshell
+            local commit="${MD_COMMIT:-$(git rev-parse HEAD)}"
+            path="${file#./}"
+            path="${path//%/%25}"
+            path="${path// /%20}"
+            path="${path//#/%23}"
+            path="${path//\?/%3F}"
+            path="${path//\(/%28}"
+            path="${path//\)/%29}"
+            path="${path//\[/%5B}"
+            path="${path//\]/%5D}"
+            url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${commit}/${path}"
+            if [ -n "$line" ]; then url="${url}#L${line}"; fi
+            printf '[%s](%s)' "$label" "$url"
+          }
+
+          # Write a findings table to the job summary, at most 200 rows.
+          # $1 = table header row, following arguments = table rows.
+          summary_table() {
+            local header="$1" columns max=200
+            shift
+            if [ $# -eq 0 ]; then return; fi
+            columns="${header//[^|]/}"
+            {
+              echo ""
+              echo "$header"
+              printf '%s\n' "${columns//|/| --- }" | sed 's/ --- $//'
+              printf '%s\n' "${@:1:$max}"
+              if [ $# -gt "$max" ]; then
+                echo ""
+                echo "_$(( $# - max )) more, see the log._"
+              fi
+              if [ $# -gt 10 ]; then
+                echo ""
+                echo "_GitHub shows at most 10 annotations per type and step, this table lists all of them._"
+              fi
+              echo ""
+            } >> "$GITHUB_STEP_SUMMARY"
+          }
+          EOF
+
+      # https://github.com/marketplace/actions/checkout
+      - name: Check Out Repository Code 🛒
+        id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+          token: ${{ secrets.GITHUB_WORKFLOW_TOKEN }}
+
+      # The archive is about 300 MB (LanguageTool models and a bundled JDK), download it once per version.
+      # Restore and save are separate steps: actions/cache saves only if the whole job succeeds, so with
+      # fail_on_findings and open findings it would download again on every run. The checksum is verified
+      # after restoring as well, a cache entry is never trusted on its own.
+      # https://github.com/marketplace/actions/cache
+      - name: Restore LTeX+ Cache 📦♻️
+        id: cache-ltex
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/ltex-download
+          key: ltex-ls-plus-${{ inputs.ltex_version }}-linux-x64-${{ inputs.ltex_sha256 }}
+
+      # https://github.com/ltex-plus/ltex-ls-plus
+      - name: Install LTeX+ 📦🛠️
+        id: install-ltex
+        env:
+          CACHE_HIT: ${{ steps.cache-ltex.outputs.cache-hit }}
+          LTEX_SHA256: ${{ inputs.ltex_sha256 }}
+          LTEX_VERSION: ${{ inputs.ltex_version }}
+        run: |
+          # The archive runs code (bundled JDK), so the checksum is mandatory.
+          if [[ ! $LTEX_SHA256 =~ ^[0-9a-fA-F]{64}$ ]]; then
+            echo "::error::ltex_sha256 must be the 64 character SHA256 of ltex-ls-plus-${LTEX_VERSION}-linux-x64.tar.gz"
+            exit 1
+          fi
+          asset="ltex-ls-plus-${LTEX_VERSION}-linux-x64.tar.gz"
+          archive="$RUNNER_TEMP/ltex-download/${asset}"
+          mkdir -p "$RUNNER_TEMP/ltex-download"
+          if [ "$CACHE_HIT" != "true" ]; then
+            curl -fsSL --proto '=https' --retry 3 -o "$archive" \
+              "https://github.com/ltex-plus/ltex-ls-plus/releases/download/${LTEX_VERSION}/${asset}"
+          fi
+          if ! echo "${LTEX_SHA256}  ${archive}" | sha256sum -c -; then
+            echo "::error::Checksum mismatch for ${asset}, ltex_sha256 must match ltex_version"
+            exit 1
+          fi
+          tar -xzf "$archive" -C "$RUNNER_TEMP"
+          bin="$RUNNER_TEMP/ltex-ls-plus-${LTEX_VERSION}/bin"
+          if [ ! -x "$bin/ltex-cli-plus" ]; then
+            echo "::error::ltex-cli-plus not found in ${asset}"
+            exit 1
+          fi
+          echo "$bin" >> "$GITHUB_PATH"
+
+      # Only after the checksum passed, so the cache never holds an unverified archive
+      - name: Save LTeX+ Cache 📦💾
+        id: save-cache-ltex
+        if: ${{ steps.cache-ltex.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/ltex-download
+          key: ${{ steps.cache-ltex.outputs.cache-primary-key }}
+
+      # Same files as the VS Code extension reads: ltex.dictionary.de-AT.txt, ltex.disabledRules.en-US.txt,
+      # ltex.hiddenFalsePositives.de-AT.txt etc. ltex-cli-plus does not resolve ":/path" entries itself,
+      # so the lists are written into the configuration.
+      - name: Build LTeX+ Configuration ⚙️
+        id: config
+        env:
+          CONFIG_DIR: ${{ inputs.config_dir }}
+          LTEX_ENABLED: ${{ inputs.enabled }}
+          LANGUAGE: ${{ inputs.language }}
+          SEPARATOR: ${{ inputs.separator }}
+        run: |
+          # shellcheck source=/dev/null
+          source "$RUNNER_TEMP/ltex-lint-lib.sh"
+
+          # ltex-cli-plus hangs without any output on a hiddenFalsePositives entry that is no JSON object
+          # with "rule" and "sentence" or whose sentence is no valid Java regex (tested with 18.7.0).
+          # Such entries are dropped with a warning. The regex is checked with java.util.regex like LTeX+
+          # does; the bundled JDK has no compiler, so this needs the full JDK of the runner image. Without
+          # one, jq (Oniguruma) checks it, which catches nearly all errors but is not identical.
+          # Prints the valid entries as JSON array of strings, as LTeX+ expects them.
+          check_false_positives() {
+            local file="$1" entry line_no=0 i java="" candidate
+            local -a valid=() valid_lines=() results=() kept=()
+            # shellcheck disable=SC2094 # the loop writes warnings to stderr, not to $file
+            while IFS= read -r entry || [ -n "$entry" ]; do
+              line_no=$((line_no + 1))
+              entry="${entry#$'\xef\xbb\xbf'}"
+              entry="${entry%$'\r'}"
+              entry="${entry#"${entry%%[![:space:]]*}"}"
+              entry="${entry%"${entry##*[![:space:]]}"}"
+              if [ -z "$entry" ]; then continue; fi
+              if jq -e -s 'length == 1 and (.[0] | type == "object" and (.rule | type) == "string" and (.sentence | type) == "string")' \
+                <<< "$entry" > /dev/null 2>&1; then
+                valid+=("$entry")
+                valid_lines+=("$line_no")
+              else
+                echo "::warning file=$(esc_prop "$file"),line=${line_no}::Invalid hiddenFalsePositives entry ignored, expected {\"rule\":\"…\",\"sentence\":\"…\"}" >&2
+              fi
+            done < "$file"
+
+            if [ ${#valid[@]} -eq 0 ]; then
+              jq -n '[]'
+              return
+            fi
+
+            # Same major version as the bundled JDK first, then any JDK that can run a source file.
+            for candidate in "${JAVA_HOME_21_X64:-}" "${JAVA_HOME:-}"; do
+              if [ -n "$candidate" ] && [ -x "$candidate/bin/java" ] && [ -x "$candidate/bin/javac" ]; then
+                java="$candidate/bin/java"
+                break
+              fi
+            done
+            if [ -z "$java" ] && command -v javac > /dev/null && command -v java > /dev/null; then
+              java="$(command -v java)"
+            fi
+
+            # One regex per line (a newline inside it becomes \n, which matches the same), one result per line.
+            if [ -n "$java" ]; then
+              cat > "$RUNNER_TEMP/CheckRegex.java" <<'JAVA'
+          import java.io.BufferedReader;
+          import java.io.InputStreamReader;
+          import java.nio.charset.StandardCharsets;
+          import java.util.regex.Pattern;
+          import java.util.regex.PatternSyntaxException;
+
+          public class CheckRegex {
+            public static void main(String[] args) throws Exception {
+              BufferedReader in = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
+              for (String line; (line = in.readLine()) != null; ) {
+                try {
+                  Pattern.compile(line);
+                  System.out.println("ok");
+                } catch (PatternSyntaxException e) {
+                  System.out.println(e.getDescription().replace('\n', ' '));
+                }
+              }
+            }
+          }
+          JAVA
+              echo "Regex check of $(esc_data "$file") with $("$java" -version 2>&1 | head -n 1)" >&2
+              mapfile -t results < <(for entry in "${valid[@]}"; do
+                jq -r '.sentence | gsub("\n"; "\\n")' <<< "$entry"
+              done | "$java" "$RUNNER_TEMP/CheckRegex.java")
+            else
+              echo "::notice::No full JDK found, regexes in $(esc_data "$file") are checked with jq (Oniguruma), not with java.util.regex" >&2
+              mapfile -t results < <(for entry in "${valid[@]}"; do
+                jq -r '.sentence as $s | try ("" | test($s) | "ok") catch (. | tostring | gsub("\n"; " "))' <<< "$entry"
+              done)
+            fi
+            if [ ${#results[@]} -ne ${#valid[@]} ]; then
+              echo "::error::Regex check of hiddenFalsePositives failed (${#results[@]} results for ${#valid[@]} entries)" >&2
+              return 1
+            fi
+
+            for i in "${!valid[@]}"; do
+              if [ "${results[$i]}" = "ok" ]; then
+                kept+=("${valid[$i]}")
+              else
+                echo "::warning file=$(esc_prop "$file"),line=${valid_lines[$i]}::Invalid regex in hiddenFalsePositives entry ignored: $(esc_data "${results[$i]}")" >&2
+              fi
+            done
+            jq -n '$ARGS.positional' --args "${kept[@]}"
+          }
+
+          config="$(jq -n --arg language "$LANGUAGE" '{language: $language}')"
+          mapfile -t enabled < <(split "$LTEX_ENABLED")
+          if [ ${#enabled[@]} -gt 0 ]; then
+            config="$(jq '.enabled = $ARGS.positional' --args "${enabled[@]}" <<< "$config")"
+          fi
+
+          # A missing directory is no error (default .vscode in a repository without LTeX+ files), but visible.
+          if [ -n "$CONFIG_DIR" ] && [ ! -d "$CONFIG_DIR" ]; then
+            echo "::warning::config_dir does not exist, checking without dictionaries and exceptions: $(esc_data "$CONFIG_DIR")"
+          elif [ -n "$CONFIG_DIR" ]; then
+            shopt -s nullglob
+            for file in "$CONFIG_DIR"/ltex.*.*.txt; do
+              name="$(basename "$file" .txt)"
+              name="${name#ltex.}"
+              setting="${name%%.*}"
+              lang="${name#*.}"
+              case "$setting" in
+                dictionary|disabledRules|enabledRules|hiddenFalsePositives) ;;
+                *)
+                  echo "::warning file=$(esc_prop "$file")::Unknown LTeX+ setting '$(esc_data "$setting")', file ignored"
+                  continue
+                  ;;
+              esac
+              # One entry per line: BOM, CR and surrounding whitespace removed, empty lines dropped.
+              entries="$(jq -R -s 'gsub("^﻿"; "") | split("\n") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))' "$file")"
+              if [ "$setting" = "hiddenFalsePositives" ]; then
+                entries="$(check_false_positives "$file")"
+              fi
+              config="$(jq --arg s "$setting" --arg l "$lang" --argjson e "$entries" '.[$s][$l] = $e' <<< "$config")"
+              echo "Config file $(esc_data "$file"): $(jq 'length' <<< "$entries") entries"
+            done
+          fi
+
+          printf '%s\n' "$config" > "$RUNNER_TEMP/ltex.json"
+          # Dictionary entries are repository content, they must not run as workflow commands.
+          stop_token="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+          echo "::group::LTeX+ configuration (lists shortened)"
+          echo "::stop-commands::${stop_token}"
+          jq 'walk(if type == "array" and length > 5 then .[0:5] + ["…"] else . end)' "$RUNNER_TEMP/ltex.json"
+          echo "::${stop_token}::"
+          echo "::endgroup::"
+
+      # Check all files in one run (the JVM and LanguageTool start only once), turn findings into annotations
+      - name: Check Spelling 📝🔍
+        id: ltex-check
+        env:
+          FAIL_ON_FINDINGS: ${{ inputs.fail_on_findings }}
+          # Java takes the encoding of file names and output from the locale, paths with umlauts must match
+          LC_ALL: C.UTF-8
+          LTEX_FILES: ${{ inputs.files }}
+          LTEX_VERSION: ${{ inputs.ltex_version }}
+          SEPARATOR: ${{ inputs.separator }}
+        run: |
+          # shellcheck source=/dev/null
+          source "$RUNNER_TEMP/ltex-lint-lib.sh"
+          echo "ltex-cli-plus ${LTEX_VERSION}"
+          MD_COMMIT="$(git rev-parse HEAD)"
+          export MD_COMMIT
+
+          mapfile -d '' -t files < <(expand_globs "$LTEX_FILES")
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::No files match: $(esc_data "$LTEX_FILES")"
+            exit 1
+          fi
+          declare -A checked=()
+          for file in "${files[@]}"; do
+            checked[$file]=1
+            echo "Check: $(esc_data "$file")"
+          done
+
+          # Exit code 0 = no findings, 3 = findings, anything else = ltex-cli-plus itself failed.
+          # Own time limit below the job timeout, so a hang still ends with a clear error and the log.
+          rc=0
+          timeout --kill-after=30s 10m ltex-cli-plus --client-configuration="$RUNNER_TEMP/ltex.json" "${files[@]}" \
+            > "$RUNNER_TEMP/ltex.out" 2> "$RUNNER_TEMP/ltex.err" || rc=$?
+
+          # The output quotes repository content, it must not run as workflow commands.
+          stop_token="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+          echo "::group::LTeX+ output"
+          echo "::stop-commands::${stop_token}"
+          cat "$RUNNER_TEMP/ltex.out" "$RUNNER_TEMP/ltex.err"
+          echo "::${stop_token}::"
+          echo "::endgroup::"
+
+          if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+            echo "::error::ltex-cli-plus did not finish within 10 minutes and was stopped"
+            exit 1
+          elif [ "$rc" -ne 0 ] && [ "$rc" -ne 3 ]; then
+            echo "::error::ltex-cli-plus failed with exit code ${rc}, see the log"
+            exit 1
+          fi
+
+          # A finding is "path:line:col: level: message [RULE]", followed by the sentence and suggestions.
+          # The path may contain ":" itself, backtracking finds the last ":line:col: ". Only paths that
+          # were checked count, so a quoted sentence that looks like a finding is never mistaken for one.
+          # The rule ID is split off separately, a finding without one still counts.
+          regex='^(.+):([0-9]+):([0-9]+): (info|warning|error|hint): (.*)$'
+          rule_regex='^(.*) \[([A-Za-z0-9_]+)\]$'
+          findings=()
+          declare -A rules=()
+          declare -A per_file=()
+          while IFS= read -r line; do
+            if [[ $line =~ $regex ]] && [ -n "${checked[${BASH_REMATCH[1]}]:-}" ]; then
+              file="${BASH_REMATCH[1]}"
+              # GitHub matches annotations by the path relative to the repository root
+              file_rel="${file#./}"
+              row="${BASH_REMATCH[2]}"
+              col="${BASH_REMATCH[3]}"
+              message="${BASH_REMATCH[5]}"
+              rule="UNKNOWN"
+              if [[ $message =~ $rule_regex ]]; then
+                message="${BASH_REMATCH[1]}"
+                rule="${BASH_REMATCH[2]}"
+              fi
+              echo "::warning file=$(esc_prop "$file_rel"),line=${row},col=${col},title=$(esc_prop "LTeX+ ${rule}")::$(esc_data "$message")"
+              findings+=("| $(md_location "$file" "$row") | \`${rule}\` | $(md_cell "$message") |")
+              rules[$rule]=$(( ${rules[$rule]:-0} + 1 ))
+              per_file[$file]=$(( ${per_file[$file]:-0} + 1 ))
+            fi
+          done < "$RUNNER_TEMP/ltex.out"
+
+          if [ "$rc" -eq 3 ] && [ ${#findings[@]} -eq 0 ]; then
+            echo "::error::ltex-cli-plus reported findings, but none could be parsed, see the log"
+            exit 1
+          fi
+
+          {
+            echo ""
+            echo "### Spelling (LTeX+) 📝"
+            echo ""
+            echo "| Files | Files with findings | Findings |"
+            echo "| --- | --- | --- |"
+            echo "| ${#files[@]} | ${#per_file[@]} | ${#findings[@]} |"
+            echo ""
+            if [ ${#rules[@]} -gt 0 ]; then
+              echo "| Rule | Findings |"
+              echo "| --- | --- |"
+              while IFS= read -r rule; do
+                echo "| \`${rule}\` | ${rules[$rule]} |"
+              done < <(printf '%s\n' "${!rules[@]}" | sort)
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          summary_table "| Location | Rule | Message |" "${findings[@]}"
+
+          echo "${#findings[@]} finding(s) in ${#per_file[@]} of ${#files[@]} file(s)"
+          if [ "$FAIL_ON_FINDINGS" = "true" ] && [ ${#findings[@]} -gt 0 ]; then
+            echo "::error::${#findings[@]} finding(s), fail_on_findings is enabled"
+            exit 1
+          fi

@@ -77,14 +77,27 @@ jobs:
           PSSA_VERSION: ${{ inputs.psscriptanalyzer_version }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $version = $env:PSSA_VERSION.Trim()
+          # String conversion, an empty variable may be $null.
+          $version = "$env:PSSA_VERSION".Trim()
 
+          # PSResourceGet (shipped since PowerShell 7.4) if available, else PowerShellGet.
           # Retry, the PowerShell Gallery fails now and then.
-          function Install-Analyzer([hashtable] $VersionArgs) {
-            Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          function Install-Analyzer([string] $Version) {
+            $usePSResourceGet = [bool] (Get-Command Install-PSResource -ErrorAction SilentlyContinue)
+            if (-not $usePSResourceGet) {
+              Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+            }
             foreach ($attempt in 1..3) {
               try {
-                Install-Module -Name PSScriptAnalyzer @VersionArgs -Scope CurrentUser -Force -Repository PSGallery
+                if ($usePSResourceGet) {
+                  $versionArgs = $Version ? @{ Version = $Version } : @{}
+                  Install-PSResource -Name PSScriptAnalyzer @versionArgs -Repository PSGallery -Scope CurrentUser `
+                    -TrustRepository -Reinstall -Quiet
+                }
+                else {
+                  $versionArgs = $Version ? @{ RequiredVersion = $Version } : @{}
+                  Install-Module -Name PSScriptAnalyzer @versionArgs -Repository PSGallery -Scope CurrentUser -Force
+                }
                 return
               }
               catch {
@@ -104,11 +117,15 @@ jobs:
               "PSScriptAnalyzer $version is already installed"
             }
             else {
-              Install-Analyzer @{ RequiredVersion = $version }
+              Install-Analyzer $version
             }
           }
           elseif (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer)) {
-            Install-Analyzer @{}
+            Install-Analyzer ''
+          }
+          if ($version -and -not (Get-Module -ListAvailable -Name PSScriptAnalyzer | Where-Object { $_.Version -eq [version] $version })) {
+            "::error::PSScriptAnalyzer $version is not available after installation"
+            exit 1
           }
           Get-Module -ListAvailable -Name PSScriptAnalyzer |
             Sort-Object Version -Descending |
@@ -133,10 +150,11 @@ jobs:
             exit 1
           }
 
-          # Split a list input at $SEPARATOR (literal, also multi-character), trim whitespace, drop empty items.
+          # Split a list input at $SEPARATOR (literal, case-sensitive, also multi-character),
+          # trim whitespace, drop empty items.
           function Split-List([string] $Value) {
             if (-not $Value) { return @() }
-            @($Value -split [regex]::Escape($env:SEPARATOR) | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+            @($Value -csplit [regex]::Escape($env:SEPARATOR) | ForEach-Object { $_.Trim() } | Where-Object { $_ })
           }
 
           # Escape values for workflow commands: data after "::", properties also ":" and ",".
@@ -196,8 +214,8 @@ jobs:
           }
           "PSScriptAnalyzer $((Get-Module PSScriptAnalyzer).Version)"
 
-          # Collect files, skip .git and excluded paths (wildcards relative to the repository root).
-          # Get-ChildItem does not follow directory symlinks without -FollowSymlink.
+          # Collect files, skip .git and excluded paths (wildcards relative to the repository root,
+          # case-sensitive like the Linux file system). Get-ChildItem does not follow directory symlinks.
           $excludes = @(Split-List $env:EXCLUDE_PATHS | ForEach-Object { ($_ -replace '^(\./)+', '').TrimEnd('/') })
           $missing = $false
           # Write-Host, because the foreach output is captured in $files.
@@ -214,9 +232,9 @@ jobs:
             Sort-Object FullName -Unique -CaseSensitive |
             Where-Object {
               $rel = Get-RelativePath $_.FullName
-              if ($rel -eq '.git' -or $rel -like '.git/*' -or $rel -like '*/.git/*') { return $false }
+              if ($rel -clike '.git/*' -or $rel -clike '*/.git/*') { return $false }
               foreach ($pattern in $excludes) {
-                if ($rel -like $pattern -or $rel -like "$pattern/*") { return $false }
+                if ($rel -clike $pattern -or $rel -clike "$pattern/*") { return $false }
               }
               $true
             })

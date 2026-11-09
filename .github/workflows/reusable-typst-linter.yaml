@@ -1,0 +1,436 @@
+---
+name: Reusable - Lint Typst Files 📑🔍
+run-name: Lint Typst Files 📑🔍
+
+on:
+  workflow_call:
+    inputs:
+      check_format:
+        description: 'Check formatting with typstyle (fails on unformatted files)'
+        required: false
+        default: false
+        type: boolean
+      fail_on_warnings:
+        description: 'Treat Typst compiler warnings as errors'
+        required: false
+        default: true
+        type: boolean
+      files:
+        description: 'Glob expression(s) of Typst entry files to compile'
+        required: false
+        default: '**/main.typ'
+        type: string
+      font_paths:
+        description: 'Font directories passed to typst via --font-path'
+        required: false
+        default: ''
+        type: string
+      format_paths:
+        description: 'Files or directories checked by typstyle'
+        required: false
+        default: '.'
+        type: string
+      lfs:
+        description: 'Pull only the Git LFS files the documents need (detected via typst --deps, plus font_paths)'
+        required: false
+        default: true
+        type: boolean
+      pdf_standard:
+        description: 'PDF standard(s) passed to typst via --pdf-standard (e.g. a-2b), some errors only show with it'
+        required: false
+        default: ''
+        type: string
+      ref:
+        description: 'Ref to checkout'
+        required: true
+        type: string
+      root:
+        description: 'Project root passed to typst via --root'
+        required: false
+        default: '.'
+        type: string
+      separator:
+        description: 'String to use as a separator for the list inputs'
+        required: false
+        default: ','
+        type: string
+      typst_version:
+        description: 'Typst version (SemVer range or latest)'
+        required: false
+        default: 'latest'
+        type: string
+      typstyle_sha256:
+        description: 'SHA256 of the typstyle x86_64-unknown-linux-gnu binary, must match typstyle_version (empty = no check)'
+        required: false
+        default: 'ea790059cd05016a6f4282386ab7b4fc92f83faa0f5126d8216df2562d7596fd'
+        type: string
+      typstyle_version:
+        description: 'typstyle version, only used if check_format is true'
+        required: false
+        default: '0.15.2'
+        type: string
+      warn_pattern:
+        description: 'Extended regex reported as warning annotation in *.typ files (e.g. #todo\[), does not fail the job'
+        required: false
+        default: ''
+        type: string
+    secrets:
+      GITHUB_WORKFLOW_TOKEN:
+        description: 'The GITHUB_TOKEN for authentication.'
+        required: true
+
+jobs:
+  lint-typst-files:
+    name: Lint Typst Files 📑🔍
+    runs-on: ubuntu-latest
+    # A document stuck in an endless loop must not burn the default 6 hours
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    permissions:
+      # for actions/checkout to fetch code
+      contents: read
+    steps:
+      # https://github.com/marketplace/actions/checkout
+      - name: Check Out Repository Code 🛒
+        id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+          token: ${{ secrets.GITHUB_WORKFLOW_TOKEN }}
+
+      # https://github.com/marketplace/actions/setup-typst
+      - name: Set Up Typst 📑🛠️
+        id: setup-typst
+        uses: typst-community/setup-typst@6a2cfaf0b28d636b00148f965e315bae81079aaa # v5.3.1
+        with:
+          typst-version: ${{ inputs.typst_version }}
+
+      # Expand the globs once, the list is used by the LFS and the lint step
+      - name: Collect Typst Files 📑📋
+        id: collect-files
+        env:
+          SEPARATOR: ${{ inputs.separator }}
+          TYPST_FILES: ${{ inputs.files }}
+        run: |
+          shopt -s globstar nullglob
+
+          # Split list input at separator, trim whitespace, drop empty items.
+          split() {
+            local item
+            while IFS= read -r item; do
+              item="${item#"${item%%[![:space:]]*}"}"
+              item="${item%"${item##*[![:space:]]}"}"
+              if [ -n "$item" ]; then printf '%s\n' "$item"; fi
+            done <<< "${1//"$SEPARATOR"/$'\n'}"
+          }
+
+          files=()
+          declare -A seen=()
+          mapfile -t globs < <(split "$TYPST_FILES")
+          for glob in "${globs[@]}"; do
+            # Glob must expand here, so no quotes. Empty IFS keeps paths with spaces intact.
+            IFS=
+            # shellcheck disable=SC2206
+            matches=($glob)
+            unset IFS
+            # Overlapping globs: compile each file only once.
+            for match in "${matches[@]}"; do
+              if [ -z "${seen[$match]:-}" ]; then
+                seen[$match]=1
+                files+=("$match")
+              fi
+            done
+          done
+
+          # A literal path without wildcard stays in the list, typst reports it as missing.
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::No Typst files match: $TYPST_FILES"
+            exit 1
+          fi
+
+          printf '%s\0' "${files[@]}" > "$RUNNER_TEMP/typst-files"
+          printf 'Typst file: %s\n' "${files[@]}"
+
+      # Pull only the LFS objects the documents read (images, data) and the fonts, not every binary in the repo
+      - name: Pull Git LFS Files 📦⬇️
+        id: lfs-pull
+        if: ${{ inputs.lfs }}
+        env:
+          FONT_PATHS: ${{ inputs.font_paths }}
+          ROOT: ${{ inputs.root }}
+          SEPARATOR: ${{ inputs.separator }}
+          TOKEN: ${{ secrets.GITHUB_WORKFLOW_TOKEN }}
+        run: |
+          # Split list input at separator, trim whitespace, drop empty items.
+          split() {
+            local item
+            while IFS= read -r item; do
+              item="${item#"${item%%[![:space:]]*}"}"
+              item="${item%"${item##*[![:space:]]}"}"
+              if [ -n "$item" ]; then printf '%s\n' "$item"; fi
+            done <<< "${1//"$SEPARATOR"/$'\n'}"
+          }
+
+          # Detection relies on typst compile --deps, fail clearly instead of silently pulling nothing.
+          help="$(typst compile --help)"
+          if [[ $help != *"--deps "* ]]; then
+            echo "::error::This Typst version has no 'typst compile --deps', use a newer typst_version or set lfs: false"
+            exit 1
+          fi
+
+          mapfile -t lfs_files < <(git lfs ls-files -n)
+          if [ ${#lfs_files[@]} -eq 0 ]; then
+            echo "No Git LFS files in repository, nothing to pull"
+            exit 0
+          fi
+          declare -A is_lfs=()
+          for f in "${lfs_files[@]}"; do is_lfs[$f]=1; done
+          declare -A pulled=()
+
+          # Header only for the GitHub host, not for the LFS storage the objects are redirected to.
+          auth="$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
+          echo "::add-mask::${auth}"
+          lfs_pull() {
+            local include
+            include="$(IFS=,; echo "$*")"
+            printf 'Pull: %s\n' "$@"
+            git -c "http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION: basic ${auth}" \
+              lfs pull --include="$include"
+            for f in "$@"; do pulled[$f]=1; done
+          }
+
+          # Fonts: typst does not list them as dependencies, so pull the font directories.
+          font_args=()
+          wanted=()
+          mapfile -t font_dirs < <(split "$FONT_PATHS")
+          for dir in "${font_dirs[@]}"; do
+            font_args+=(--font-path "$dir")
+            dir="${dir#./}"
+            dir="${dir%/}"
+            for f in "${lfs_files[@]}"; do
+              if [[ $f == "$dir"/* ]]; then wanted+=("$f"); fi
+            done
+          done
+          if [ ${#wanted[@]} -gt 0 ]; then lfs_pull "${wanted[@]}"; fi
+
+          # Dependencies: typst writes them even if compiling fails on an LFS pointer,
+          # repeat in case a pulled file (e.g. read() data) pulls in further files.
+          mapfile -d '' -t files < "$RUNNER_TEMP/typst-files"
+          for round in 1 2 3 4 5; do
+            wanted=()
+            for file in "${files[@]}"; do
+              typst compile --root "$ROOT" "${font_args[@]}" --deps "$RUNNER_TEMP/deps" \
+                --deps-format zero "$file" "$RUNNER_TEMP/lfs.pdf" > /dev/null 2>&1 || true
+              [ -f "$RUNNER_TEMP/deps" ] || continue
+              mapfile -d '' -t deps < "$RUNNER_TEMP/deps"
+              rm -f "$RUNNER_TEMP/deps"
+              for dep in "${deps[@]}"; do
+                dep="${dep#./}"
+                if [ -n "${is_lfs[$dep]:-}" ] && [ -z "${pulled[$dep]:-}" ]; then
+                  wanted+=("$dep")
+                  pulled[$dep]=1
+                fi
+              done
+            done
+            if [ ${#wanted[@]} -eq 0 ]; then break; fi
+            echo "Round ${round}: ${#wanted[@]} LFS file(s) needed"
+            lfs_pull "${wanted[@]}"
+          done
+
+          echo "Pulled ${#pulled[@]} of ${#lfs_files[@]} LFS file(s)"
+          {
+            echo ""
+            echo "Git LFS: pulled ${#pulled[@]} of ${#lfs_files[@]} file(s)"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Compile every entry file, turn diagnostics into GitHub annotations
+      - name: Lint Typst Files 📑🔍
+        id: typst-linter
+        env:
+          FAIL_ON_WARNINGS: ${{ inputs.fail_on_warnings }}
+          FONT_PATHS: ${{ inputs.font_paths }}
+          PDF_STANDARD: ${{ inputs.pdf_standard }}
+          ROOT: ${{ inputs.root }}
+          SEPARATOR: ${{ inputs.separator }}
+        run: |
+          typst --version
+
+          # Escape values for workflow commands: data after "::", properties also ":" and ",".
+          esc_data() {
+            local v="${1//%/%25}"
+            v="${v//$'\r'/%0D}"
+            printf '%s' "${v//$'\n'/%0A}"
+          }
+          esc_prop() {
+            local v
+            v="$(esc_data "$1")"
+            v="${v//:/%3A}"
+            printf '%s' "${v//,/%2C}"
+          }
+
+          # Split list input at separator, trim whitespace, drop empty items.
+          split() {
+            local item
+            while IFS= read -r item; do
+              item="${item#"${item%%[![:space:]]*}"}"
+              item="${item%"${item##*[![:space:]]}"}"
+              if [ -n "$item" ]; then printf '%s\n' "$item"; fi
+            done <<< "${1//"$SEPARATOR"/$'\n'}"
+          }
+
+          font_args=()
+          mapfile -t font_dirs < <(split "$FONT_PATHS")
+          for dir in "${font_dirs[@]}"; do
+            font_args+=(--font-path "$dir")
+          done
+          standard_args=()
+          if [ -n "$PDF_STANDARD" ]; then
+            standard_args=(--pdf-standard "$PDF_STANDARD")
+          fi
+
+          mapfile -d '' -t files < "$RUNNER_TEMP/typst-files"
+
+          # Raw compiler output contains repository content, it must not run as workflow commands.
+          stop_token="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+
+          failed=0
+          errors=0
+          warnings=0
+          # With location: path:line:col: level: message, without location: level: message.
+          # The path may contain ":" itself, backtracking finds the last ":line:col: ".
+          regex='^((.+):([0-9]+):([0-9]+): )?(error|warning): (.*)$'
+
+          for file in "${files[@]}"; do
+            echo "::group::$(esc_data "$file")"
+            output="$(typst compile --root "$ROOT" "${font_args[@]}" "${standard_args[@]}" \
+              --diagnostic-format short "$file" "$RUNNER_TEMP/lint.pdf" 2>&1)" || failed=$((failed + 1))
+
+            if [ -n "$output" ]; then
+              echo "::stop-commands::${stop_token}"
+              printf '%s\n' "$output"
+              echo "::${stop_token}::"
+            fi
+
+            annotations=()
+            while IFS= read -r line; do
+              if [[ $line =~ $regex ]]; then
+                level="${BASH_REMATCH[5]}"
+                message="$(esc_data "${BASH_REMATCH[6]}")"
+                if [ "$level" = "warning" ]; then
+                  warnings=$((warnings + 1))
+                else
+                  errors=$((errors + 1))
+                fi
+                if [ -n "${BASH_REMATCH[1]}" ]; then
+                  annotations+=("::${level} file=$(esc_prop "${BASH_REMATCH[2]}"),line=${BASH_REMATCH[3]},col=${BASH_REMATCH[4]}::${message}")
+                else
+                  annotations+=("::${level} title=$(esc_prop "$file")::${message}")
+                fi
+              fi
+            done <<< "$output"
+            if [ ${#annotations[@]} -gt 0 ]; then
+              printf '%s\n' "${annotations[@]}"
+            fi
+            echo "::endgroup::"
+          done
+
+          {
+            echo ""
+            echo "### Typst Lint 📑"
+            echo ""
+            echo "| Files | Failed | Errors | Warnings |"
+            echo "| --- | --- | --- | --- |"
+            echo "| ${#files[@]} | ${failed} | ${errors} | ${warnings} |"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$failed" -gt 0 ]; then
+            echo "::error::${failed} file(s) failed to compile"
+            exit 1
+          fi
+          if [ "$FAIL_ON_WARNINGS" = "true" ] && [ "$warnings" -gt 0 ]; then
+            echo "::error::${warnings} warning(s), fail_on_warnings is enabled"
+            exit 1
+          fi
+
+      # Report matches (e.g. open #todo) as annotations only
+      - name: Check Warn Patterns 🔎📝
+        id: warn-pattern
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && inputs.warn_pattern != '' }}
+        env:
+          WARN_PATTERN: ${{ inputs.warn_pattern }}
+        run: |
+          # Grep exits 1 for "no match" and 2 for an invalid regex.
+          rc=0
+          grep -qE -- "$WARN_PATTERN" /dev/null || rc=$?
+          if [ "$rc" -gt 1 ]; then
+            echo "::error::Invalid warn_pattern: $WARN_PATTERN"
+            exit 1
+          fi
+
+          # Escape values for workflow commands: data after "::", properties also ":" and ",".
+          esc_data() {
+            local v="${1//%/%25}"
+            v="${v//$'\r'/%0D}"
+            printf '%s' "${v//$'\n'/%0A}"
+          }
+          esc_prop() {
+            local v
+            v="$(esc_data "$1")"
+            v="${v//:/%3A}"
+            printf '%s' "${v//,/%2C}"
+          }
+
+          count=0
+          while IFS=: read -r file line text; do
+            echo "::warning file=$(esc_prop "$file"),line=${line}::Pattern match: $(esc_data "$text")"
+            count=$((count + 1))
+          done < <(git ls-files -z '*.typ' | xargs -0 -r grep -nE -- "$WARN_PATTERN" /dev/null || true)
+          echo "${count} match(es) for pattern: $WARN_PATTERN"
+          {
+            echo ""
+            echo "Warn pattern \`${WARN_PATTERN}\`: ${count} match(es)"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # https://github.com/typstyle-rs/typstyle
+      - name: Install Typstyle 📦🛠️
+        id: install-typstyle
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && inputs.check_format }}
+        env:
+          TYPSTYLE_SHA256: ${{ inputs.typstyle_sha256 }}
+          TYPSTYLE_VERSION: ${{ inputs.typstyle_version }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/typstyle" \
+            "https://github.com/typstyle-rs/typstyle/releases/download/v${TYPSTYLE_VERSION}/typstyle-x86_64-unknown-linux-gnu"
+          if [ -n "$TYPSTYLE_SHA256" ]; then
+            echo "${TYPSTYLE_SHA256}  $RUNNER_TEMP/bin/typstyle" | sha256sum -c -
+          fi
+          chmod +x "$RUNNER_TEMP/bin/typstyle"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      # Check formatting of Typst files with typstyle
+      - name: Check Typst Formatting 🎨🔍
+        id: typstyle-check
+        if: ${{ !cancelled() && steps.install-typstyle.outcome == 'success' }}
+        env:
+          FORMAT_PATHS: ${{ inputs.format_paths }}
+          SEPARATOR: ${{ inputs.separator }}
+        run: |
+          # Split list input at separator, trim whitespace, drop empty items.
+          split() {
+            local item
+            while IFS= read -r item; do
+              item="${item#"${item%%[![:space:]]*}"}"
+              item="${item%"${item##*[![:space:]]}"}"
+              if [ -n "$item" ]; then printf '%s\n' "$item"; fi
+            done <<< "${1//"$SEPARATOR"/$'\n'}"
+          }
+          typstyle --version
+          mapfile -t paths < <(split "$FORMAT_PATHS")
+          typstyle --check "${paths[@]}"

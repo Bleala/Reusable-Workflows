@@ -1,0 +1,386 @@
+---
+name: Reusable - Lint PowerShell Scripts 💠🔍
+run-name: Lint PowerShell Scripts 💠🔍
+
+on:
+  workflow_call:
+    inputs:
+      exclude_paths:
+        description: 'Paths or wildcard patterns (relative to the repository root) to exclude from linting'
+        required: false
+        default: ''
+        type: string
+      exclude_rules:
+        description: 'PSScriptAnalyzer rules to exclude (e.g. PSAvoidUsingWriteHost)'
+        required: false
+        default: ''
+        type: string
+      fail_on:
+        description: 'Lowest severity that fails the job: error, warning, information or none (ParseError always fails)'
+        required: false
+        default: 'warning'
+        type: string
+      paths:
+        description: 'Files or directories to lint, directories are searched recursively for *.ps1, *.psm1 and *.psd1'
+        required: false
+        default: '.'
+        type: string
+      psscriptanalyzer_version:
+        description: 'PSScriptAnalyzer version from the PowerShell Gallery, empty = version preinstalled on the runner'
+        required: false
+        default: '1.25.0'
+        type: string
+      ref:
+        description: 'Ref to checkout'
+        required: true
+        type: string
+      separator:
+        description: 'String to use as a separator for the list inputs'
+        required: false
+        default: ','
+        type: string
+      settings:
+        description: 'Path to a PSScriptAnalyzer settings file (.psd1), empty = PSScriptAnalyzerSettings.psd1 in the repository root if present'
+        required: false
+        default: ''
+        type: string
+    secrets:
+      GITHUB_WORKFLOW_TOKEN:
+        description: 'The GITHUB_TOKEN for authentication.'
+        required: true
+
+jobs:
+  lint-powershell-scripts:
+    name: Lint PowerShell Scripts 💠🔍
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: pwsh
+    permissions:
+      # for actions/checkout to fetch code
+      contents: read
+    steps:
+      # https://github.com/marketplace/actions/checkout
+      - name: Check Out Repository Code 🛒
+        id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+          token: ${{ secrets.GITHUB_WORKFLOW_TOKEN }}
+
+      # Pinned version for reproducible results, the preinstalled one changes with the runner image
+      - name: Set Up PSScriptAnalyzer 💠🛠️
+        id: setup-psscriptanalyzer
+        env:
+          PSSA_VERSION: ${{ inputs.psscriptanalyzer_version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:PSSA_VERSION.Trim()
+
+          # Retry, the PowerShell Gallery fails now and then.
+          function Install-Analyzer([hashtable] $VersionArgs) {
+            Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+            foreach ($attempt in 1..3) {
+              try {
+                Install-Module -Name PSScriptAnalyzer @VersionArgs -Scope CurrentUser -Force -Repository PSGallery
+                return
+              }
+              catch {
+                if ($attempt -eq 3) { throw }
+                Write-Host "Install failed (attempt $attempt), retrying: $($_.Exception.Message -replace '[\r\n]+', ' ')"
+                Start-Sleep -Seconds (5 * $attempt)
+              }
+            }
+          }
+
+          if ($version) {
+            if ($version -notmatch '^\d+\.\d+\.\d+$') {
+              '::error::Invalid psscriptanalyzer_version, expected MAJOR.MINOR.PATCH (e.g. 1.25.0)'
+              exit 1
+            }
+            if (Get-Module -ListAvailable -Name PSScriptAnalyzer | Where-Object { $_.Version -eq [version] $version }) {
+              "PSScriptAnalyzer $version is already installed"
+            }
+            else {
+              Install-Analyzer @{ RequiredVersion = $version }
+            }
+          }
+          elseif (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer)) {
+            Install-Analyzer @{}
+          }
+          Get-Module -ListAvailable -Name PSScriptAnalyzer |
+            Sort-Object Version -Descending |
+            ForEach-Object { "Available: PSScriptAnalyzer $($_.Version) ($($_.ModuleBase))" }
+
+      # Analyse every script, turn findings into GitHub annotations and a job summary
+      - name: Lint PowerShell Scripts 💠🔍
+        id: powershell-linter
+        env:
+          EXCLUDE_PATHS: ${{ inputs.exclude_paths }}
+          EXCLUDE_RULES: ${{ inputs.exclude_rules }}
+          FAIL_ON: ${{ inputs.fail_on }}
+          PSSA_VERSION: ${{ inputs.psscriptanalyzer_version }}
+          SCAN_PATHS: ${{ inputs.paths }}
+          SEPARATOR: ${{ inputs.separator }}
+          SETTINGS: ${{ inputs.settings }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          if (-not $env:SEPARATOR) {
+            '::error::Input separator must not be empty'
+            exit 1
+          }
+
+          # Split a list input at $SEPARATOR (literal, also multi-character), trim whitespace, drop empty items.
+          function Split-List([string] $Value) {
+            if (-not $Value) { return @() }
+            @($Value -split [regex]::Escape($env:SEPARATOR) | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+          }
+
+          # Escape values for workflow commands: data after "::", properties also ":" and ",".
+          function ConvertTo-CommandData([string] $Value) {
+            $Value.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+          }
+          function ConvertTo-CommandProperty([string] $Value) {
+            (ConvertTo-CommandData $Value).Replace(':', '%3A').Replace(',', '%2C')
+          }
+
+          # Escape text for a Markdown table cell in the job summary: HTML first, then Markdown syntax,
+          # so repository content cannot add links, images, HTML or formatting.
+          function ConvertTo-MarkdownCell([string] $Value) {
+            $v = $Value.Replace('&', '&amp;').Replace('<', '&lt;').Replace('>', '&gt;')
+            $v = $v -replace '([\\`*_\[\]|~])', '\$1'
+            $v.Replace("`r", '').Replace("`n", ' ')
+          }
+
+          # Location as Markdown link to file and line at the checked out commit,
+          # plain text for paths outside the repository.
+          $commit = (git rev-parse HEAD)
+          if ($LASTEXITCODE -ne 0 -or -not $commit) {
+            '::error::git rev-parse HEAD failed, is the repository checked out?'
+            exit 1
+          }
+          $commit = $commit.Trim()
+          function Get-MarkdownLocation([string] $File, $Line) {
+            $label = ConvertTo-MarkdownCell $File
+            if ($Line) { $label = "${label}:${Line}" }
+            if ($File.StartsWith('../') -or [System.IO.Path]::IsPathRooted($File)) { return $label }
+            $path = ($File.Split('/') | ForEach-Object { [System.Uri]::EscapeDataString($_) }) -join '/'
+            $url = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/blob/$commit/$path"
+            if ($Line) { $url = "${url}#L${Line}" }
+            "[$label]($url)"
+          }
+
+          # Path relative to the repository root with "/" separators.
+          $root = (Get-Location).Path
+          function Get-RelativePath([string] $Path) {
+            [System.IO.Path]::GetRelativePath($root, $Path).Replace('\', '/')
+          }
+
+          # Severity ranking, ParseError and analyzer failures always fail.
+          $failOn = "$env:FAIL_ON".Trim().ToLowerInvariant()
+          $rank = @{ information = 1; warning = 2; error = 3; none = 99 }
+          if (-not $rank.ContainsKey($failOn)) {
+            "::error::Invalid fail_on '$(ConvertTo-CommandData $failOn)', use error, warning, information or none"
+            exit 1
+          }
+
+          $version = "$env:PSSA_VERSION".Trim()
+          if ($version) {
+            Import-Module PSScriptAnalyzer -RequiredVersion $version
+          }
+          else {
+            Import-Module PSScriptAnalyzer
+          }
+          "PSScriptAnalyzer $((Get-Module PSScriptAnalyzer).Version)"
+
+          # Collect files, skip .git and excluded paths (wildcards relative to the repository root).
+          # Get-ChildItem does not follow directory symlinks without -FollowSymlink.
+          $excludes = @(Split-List $env:EXCLUDE_PATHS | ForEach-Object { ($_ -replace '^(\./)+', '').TrimEnd('/') })
+          $missing = $false
+          # Write-Host, because the foreach output is captured in $files.
+          $files = foreach ($scanPath in (Split-List $env:SCAN_PATHS)) {
+            if (-not (Test-Path -LiteralPath $scanPath)) {
+              Write-Host "::error::Path not found: $(ConvertTo-CommandData $scanPath)"
+              $missing = $true
+              continue
+            }
+            Get-ChildItem -LiteralPath $scanPath -Recurse -File -Include '*.ps1', '*.psm1', '*.psd1' -Force
+          }
+          if ($missing) { exit 1 }
+          $files = @($files |
+            Sort-Object FullName -Unique -CaseSensitive |
+            Where-Object {
+              $rel = Get-RelativePath $_.FullName
+              if ($rel -eq '.git' -or $rel -like '.git/*' -or $rel -like '*/.git/*') { return $false }
+              foreach ($pattern in $excludes) {
+                if ($rel -like $pattern -or $rel -like "$pattern/*") { return $false }
+              }
+              $true
+            })
+
+          if ($files.Count -eq 0) {
+            '::notice::No PowerShell files found, nothing to lint'
+            exit 0
+          }
+
+          # Settings file: explicit input, otherwise PSScriptAnalyzerSettings.psd1 in the root.
+          # Note: a settings file can load custom rules (CustomRulePath), which runs code from the repository.
+          $settings = "$env:SETTINGS".Trim()
+          if (-not $settings -and (Test-Path -LiteralPath 'PSScriptAnalyzerSettings.psd1' -PathType Leaf)) {
+            $settings = 'PSScriptAnalyzerSettings.psd1'
+          }
+          if ($settings -and -not (Test-Path -LiteralPath $settings -PathType Leaf)) {
+            "::error::Settings file not found: $(ConvertTo-CommandData $settings)"
+            exit 1
+          }
+          $analyzerArgs = @{}
+          if ($settings) {
+            "Settings: $(ConvertTo-CommandData $settings)"
+            $analyzerArgs.Settings = (Resolve-Path -LiteralPath $settings).Path
+          }
+          $excludeRules = @(Split-List $env:EXCLUDE_RULES)
+          if ($excludeRules.Count -gt 0) {
+            "Excluded rules: $(ConvertTo-CommandData ($excludeRules -join ', '))"
+            $analyzerArgs.ExcludeRule = $excludeRules
+          }
+
+          # Everything the analyzer prints (results, warnings, errors) can contain repository content,
+          # it must not run as workflow commands. Annotations are printed after resuming.
+          $stopToken = [System.Guid]::NewGuid().ToString('N')
+
+          # Unique messages of error records. Records without message (wrappers of an already listed error)
+          # are dropped, the error ID is only used if no record has a message. No stack traces.
+          function Get-ErrorMessages([object[]] $ErrorRecords) {
+            $records = @($ErrorRecords | Where-Object { $_ })
+            if ($records.Count -eq 0) { return @() }
+            $messages = @($records | ForEach-Object { "$($_.Exception.Message)".Trim() } | Where-Object { $_ } | Sort-Object -Unique)
+            if ($messages.Count -eq 0) {
+              $messages = @($records | ForEach-Object { "$($_.FullyQualifiedErrorId)".Trim() } | Where-Object { $_ } | Sort-Object -Unique)
+            }
+            if ($messages.Count -eq 0) { $messages = @('unknown error') }
+            $messages
+          }
+
+          # Check settings and rule selection once on an empty script, instead of failing on every file.
+          "::stop-commands::$stopToken"
+          $configErrors = @()
+          try {
+            $null = Invoke-ScriptAnalyzer -ScriptDefinition '$null' @analyzerArgs `
+              -ErrorAction SilentlyContinue -ErrorVariable configErrors -WarningAction SilentlyContinue
+          }
+          catch {
+            $configErrors = @($configErrors) + $_
+          }
+          $configMessages = @(Get-ErrorMessages $configErrors)
+          foreach ($message in $configMessages) { "ERROR: $message" }
+          "::${stopToken}::"
+          if ($configMessages.Count -gt 0) {
+            $summaryLines = @('', 'PowerShell: invalid PSScriptAnalyzer configuration (settings or rules)', '')
+            foreach ($message in $configMessages) {
+              "::error title=PSScriptAnalyzer configuration::$(ConvertTo-CommandData $message)"
+              $summaryLines += "- $(ConvertTo-MarkdownCell $message)"
+            }
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ($summaryLines + '') -Encoding utf8NoBOM
+            exit 1
+          }
+
+          $counts = @{ ParseError = 0; Error = 0; Warning = 0; Information = 0 }
+          $failed = $false
+          $findings = [System.Collections.Generic.List[string]]::new()
+
+          foreach ($file in $files) {
+            $rel = Get-RelativePath $file.FullName
+            "::group::$(ConvertTo-CommandData $rel)"
+
+            "::stop-commands::$stopToken"
+            $results = @()
+            $analyzerErrors = @()
+            $analyzerWarnings = @()
+            try {
+              # Errors and warnings are only collected, not written directly: stderr may arrive after the
+              # resume token. SilentlyContinue, so a failing rule does not discard the other results.
+              $results = @(Invoke-ScriptAnalyzer -Path $file.FullName @analyzerArgs `
+                  -ErrorAction SilentlyContinue -ErrorVariable analyzerErrors `
+                  -WarningAction SilentlyContinue -WarningVariable analyzerWarnings)
+            }
+            catch {
+              $analyzerErrors = @($analyzerErrors) + $_
+            }
+            $analyzerErrors = @(Get-ErrorMessages $analyzerErrors)
+            foreach ($analyzerWarning in $analyzerWarnings) { "WARNING: $analyzerWarning" }
+            foreach ($analyzerError in $analyzerErrors) { "ERROR: $analyzerError" }
+            if ($results.Count -gt 0) {
+              $results | Format-Table -AutoSize -Wrap Line, Column, Severity, RuleName, Message | Out-String -Width 200
+            }
+            elseif ($analyzerErrors.Count -eq 0) {
+              'No findings'
+            }
+            "::${stopToken}::"
+
+            foreach ($result in $results) {
+              $severity = [string] $result.Severity
+              $counts[$severity] = 1 + $counts[$severity]
+              $level = switch ($severity) {
+                'Information' { 'notice' }
+                'Warning' { 'warning' }
+                default { 'error' }
+              }
+              $severityRank = switch ($severity) {
+                'Information' { 1 }
+                'Warning' { 2 }
+                default { 3 }
+              }
+              if ($severity -eq 'ParseError' -or $severityRank -ge $rank[$failOn]) { $failed = $true }
+
+              $line = $result.Line
+              $props = "file=$(ConvertTo-CommandProperty $rel),title=$(ConvertTo-CommandProperty $result.RuleName)"
+              if ($line -gt 0) { $props += ",line=$line" }
+              if ($result.Column -gt 0) { $props += ",col=$($result.Column)" }
+              "::${level} ${props}::$(ConvertTo-CommandData $result.Message)"
+
+              $findings.Add("| $severity | $(Get-MarkdownLocation $rel $line) | $(ConvertTo-MarkdownCell $result.RuleName) | $(ConvertTo-MarkdownCell $result.Message) |")
+            }
+
+            # Analyzer failures (e.g. a rule crashing or an invalid settings file) are errors.
+            foreach ($analyzerError in $analyzerErrors) {
+              $counts.Error++
+              $failed = $true
+              $message = "PSScriptAnalyzer failed: $analyzerError"
+              "::error file=$(ConvertTo-CommandProperty $rel),title=PSScriptAnalyzer::$(ConvertTo-CommandData $message)"
+              $findings.Add("| Error | $(Get-MarkdownLocation $rel) | PSScriptAnalyzer | $(ConvertTo-MarkdownCell $message) |")
+            }
+            '::endgroup::'
+          }
+
+          # Job summary with all findings, at most 200 rows.
+          $total = $findings.Count
+          $errorCount = $counts.ParseError + $counts.Error
+          $summary = [System.Text.StringBuilder]::new()
+          [void] $summary.AppendLine('')
+          [void] $summary.AppendLine("PowerShell: $($files.Count) file(s), $errorCount error(s), $($counts.Warning) warning(s), $($counts.Information) information(s)")
+          if ($total -gt 0) {
+            $max = 200
+            [void] $summary.AppendLine('')
+            [void] $summary.AppendLine('| Severity | Location | Rule | Message |')
+            [void] $summary.AppendLine('| --- | --- | --- | --- |')
+            $findings | Select-Object -First $max | ForEach-Object { [void] $summary.AppendLine($_) }
+            if ($total -gt $max) {
+              [void] $summary.AppendLine('')
+              [void] $summary.AppendLine("_$($total - $max) more, see the log._")
+            }
+            if ($total -gt 10) {
+              [void] $summary.AppendLine('')
+              [void] $summary.AppendLine('_GitHub shows at most 10 annotations per type and step, this table lists all of them._')
+            }
+          }
+          [void] $summary.AppendLine('')
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $summary.ToString() -Encoding utf8NoBOM
+
+          "Linted $($files.Count) file(s): $($counts.ParseError) parse error(s), $($counts.Error) error(s), $($counts.Warning) warning(s), $($counts.Information) information(s)"
+          if ($failed) {
+            "::error::PSScriptAnalyzer found issues at or above severity '$failOn'"
+            exit 1
+          }

@@ -92,6 +92,89 @@ jobs:
       # for actions/checkout to fetch code
       contents: read
     steps:
+      # Shared shell functions, every following run step sources this file
+      - name: Prepare Helper Functions 🧰
+        id: helpers
+        run: |
+          cat > "$RUNNER_TEMP/typst-lint-lib.sh" <<'EOF'
+          # Literal "&" in ${var//pattern/replacement} (bash 5.2 would insert the match).
+          shopt -u patsub_replacement 2>/dev/null || true
+
+          # Split a list input at $SEPARATOR, trim whitespace, drop empty items (one item per line).
+          split() {
+            local item
+            while IFS= read -r item; do
+              item="${item#"${item%%[![:space:]]*}"}"
+              item="${item%"${item##*[![:space:]]}"}"
+              if [ -n "$item" ]; then printf '%s\n' "$item"; fi
+            done <<< "${1//"$SEPARATOR"/$'\n'}"
+          }
+
+          # Escape values for workflow commands: data after "::", properties also ":" and ",".
+          esc_data() {
+            local v="${1//%/%25}"
+            v="${v//$'\r'/%0D}"
+            printf '%s' "${v//$'\n'/%0A}"
+          }
+          esc_prop() {
+            local v
+            v="$(esc_data "$1")"
+            v="${v//:/%3A}"
+            printf '%s' "${v//,/%2C}"
+          }
+
+          # Escape text for a Markdown table cell in the job summary.
+          md_cell() {
+            local v="${1//|/\\|}"
+            v="${v//</&lt;}"
+            v="${v//$'\r'/}"
+            printf '%s' "${v//$'\n'/ }"
+          }
+
+          # Location as Markdown link to file and line at the checked out commit,
+          # plain text for paths outside the repository (e.g. Typst packages).
+          md_location() {
+            local file="$1" line="${2:-}" label url path
+            label="$(md_cell "$file")"
+            if [ -n "$line" ]; then label="${label}:${line}"; fi
+            if [[ $file == /* || ! -e $file ]]; then
+              printf '%s' "$label"
+              return
+            fi
+            path="${file//%/%25}"
+            path="${path// /%20}"
+            path="${path//#/%23}"
+            path="${path//\?/%3F}"
+            url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/$(git rev-parse HEAD)/${path}"
+            if [ -n "$line" ]; then url="${url}#L${line}"; fi
+            printf '[%s](%s)' "$label" "$url"
+          }
+
+          # Write a findings table to the job summary, at most 200 rows.
+          # $1 = table header row, following arguments = table rows.
+          summary_table() {
+            local header="$1" columns max=200
+            shift
+            if [ $# -eq 0 ]; then return; fi
+            columns="${header//[^|]/}"
+            {
+              echo ""
+              echo "$header"
+              printf '%s\n' "${columns//|/| --- }" | sed 's/ --- $//'
+              printf '%s\n' "${@:1:$max}"
+              if [ $# -gt "$max" ]; then
+                echo ""
+                echo "_$(( $# - max )) more, see the log._"
+              fi
+              if [ $# -gt 10 ]; then
+                echo ""
+                echo "_GitHub shows at most 10 annotations per type and step, this table lists all of them._"
+              fi
+              echo ""
+            } >> "$GITHUB_STEP_SUMMARY"
+          }
+          EOF
+
       # https://github.com/marketplace/actions/checkout
       - name: Check Out Repository Code 🛒
         id: checkout
@@ -115,17 +198,9 @@ jobs:
           SEPARATOR: ${{ inputs.separator }}
           TYPST_FILES: ${{ inputs.files }}
         run: |
+          # shellcheck source=/dev/null
+          source "$RUNNER_TEMP/typst-lint-lib.sh"
           shopt -s globstar nullglob
-
-          # Split list input at separator, trim whitespace, drop empty items.
-          split() {
-            local item
-            while IFS= read -r item; do
-              item="${item#"${item%%[![:space:]]*}"}"
-              item="${item%"${item##*[![:space:]]}"}"
-              if [ -n "$item" ]; then printf '%s\n' "$item"; fi
-            done <<< "${1//"$SEPARATOR"/$'\n'}"
-          }
 
           files=()
           declare -A seen=()
@@ -147,7 +222,7 @@ jobs:
 
           # A literal path without wildcard stays in the list, typst reports it as missing.
           if [ ${#files[@]} -eq 0 ]; then
-            echo "::error::No Typst files match: $TYPST_FILES"
+            echo "::error::No Typst files match: $(esc_data "$TYPST_FILES")"
             exit 1
           fi
 
@@ -164,15 +239,8 @@ jobs:
           SEPARATOR: ${{ inputs.separator }}
           TOKEN: ${{ secrets.GITHUB_WORKFLOW_TOKEN }}
         run: |
-          # Split list input at separator, trim whitespace, drop empty items.
-          split() {
-            local item
-            while IFS= read -r item; do
-              item="${item#"${item%%[![:space:]]*}"}"
-              item="${item%"${item##*[![:space:]]}"}"
-              if [ -n "$item" ]; then printf '%s\n' "$item"; fi
-            done <<< "${1//"$SEPARATOR"/$'\n'}"
-          }
+          # shellcheck source=/dev/null
+          source "$RUNNER_TEMP/typst-lint-lib.sh"
 
           # Detection relies on typst compile --deps, fail clearly instead of silently pulling nothing.
           help="$(typst compile --help)"
@@ -257,30 +325,9 @@ jobs:
           ROOT: ${{ inputs.root }}
           SEPARATOR: ${{ inputs.separator }}
         run: |
+          # shellcheck source=/dev/null
+          source "$RUNNER_TEMP/typst-lint-lib.sh"
           typst --version
-
-          # Escape values for workflow commands: data after "::", properties also ":" and ",".
-          esc_data() {
-            local v="${1//%/%25}"
-            v="${v//$'\r'/%0D}"
-            printf '%s' "${v//$'\n'/%0A}"
-          }
-          esc_prop() {
-            local v
-            v="$(esc_data "$1")"
-            v="${v//:/%3A}"
-            printf '%s' "${v//,/%2C}"
-          }
-
-          # Split list input at separator, trim whitespace, drop empty items.
-          split() {
-            local item
-            while IFS= read -r item; do
-              item="${item#"${item%%[![:space:]]*}"}"
-              item="${item%"${item##*[![:space:]]}"}"
-              if [ -n "$item" ]; then printf '%s\n' "$item"; fi
-            done <<< "${1//"$SEPARATOR"/$'\n'}"
-          }
 
           font_args=()
           mapfile -t font_dirs < <(split "$FONT_PATHS")
@@ -300,6 +347,7 @@ jobs:
           failed=0
           errors=0
           warnings=0
+          findings=()
           # With location: path:line:col: level: message, without location: level: message.
           # The path may contain ":" itself, backtracking finds the last ":line:col: ".
           regex='^((.+):([0-9]+):([0-9]+): )?(error|warning): (.*)$'
@@ -319,17 +367,20 @@ jobs:
             while IFS= read -r line; do
               if [[ $line =~ $regex ]]; then
                 level="${BASH_REMATCH[5]}"
-                message="$(esc_data "${BASH_REMATCH[6]}")"
+                message="${BASH_REMATCH[6]}"
                 if [ "$level" = "warning" ]; then
                   warnings=$((warnings + 1))
                 else
                   errors=$((errors + 1))
                 fi
                 if [ -n "${BASH_REMATCH[1]}" ]; then
-                  annotations+=("::${level} file=$(esc_prop "${BASH_REMATCH[2]}"),line=${BASH_REMATCH[3]},col=${BASH_REMATCH[4]}::${message}")
+                  annotations+=("::${level} file=$(esc_prop "${BASH_REMATCH[2]}"),line=${BASH_REMATCH[3]},col=${BASH_REMATCH[4]}::$(esc_data "$message")")
+                  location="$(md_location "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}")"
                 else
-                  annotations+=("::${level} title=$(esc_prop "$file")::${message}")
+                  annotations+=("::${level} title=$(esc_prop "$file")::$(esc_data "$message")")
+                  location="$(md_location "$file")"
                 fi
+                findings+=("| ${level} | ${location} | $(md_cell "$message") |")
               fi
             done <<< "$output"
             if [ ${#annotations[@]} -gt 0 ]; then
@@ -347,6 +398,7 @@ jobs:
             echo "| ${#files[@]} | ${failed} | ${errors} | ${warnings} |"
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
+          summary_table "| Level | Location | Message |" "${findings[@]}"
 
           if [ "$failed" -gt 0 ]; then
             echo "::error::${failed} file(s) failed to compile"
@@ -360,43 +412,37 @@ jobs:
       # Report matches (e.g. open #todo) as annotations only
       - name: Check Warn Patterns 🔎📝
         id: warn-pattern
-        if: ${{ !cancelled() && steps.checkout.outcome == 'success' && inputs.warn_pattern != '' }}
+        if: ${{ !cancelled() && steps.helpers.outcome == 'success' && steps.checkout.outcome == 'success' && inputs.warn_pattern != '' }}
         env:
           WARN_PATTERN: ${{ inputs.warn_pattern }}
         run: |
+          # shellcheck source=/dev/null
+          source "$RUNNER_TEMP/typst-lint-lib.sh"
+
           # Grep exits 1 for "no match" and 2 for an invalid regex.
           rc=0
           grep -qE -- "$WARN_PATTERN" /dev/null || rc=$?
           if [ "$rc" -gt 1 ]; then
-            echo "::error::Invalid warn_pattern: $WARN_PATTERN"
+            echo "::error::Invalid warn_pattern: $(esc_data "$WARN_PATTERN")"
             exit 1
           fi
 
-          # Escape values for workflow commands: data after "::", properties also ":" and ",".
-          esc_data() {
-            local v="${1//%/%25}"
-            v="${v//$'\r'/%0D}"
-            printf '%s' "${v//$'\n'/%0A}"
-          }
-          esc_prop() {
-            local v
-            v="$(esc_data "$1")"
-            v="${v//:/%3A}"
-            printf '%s' "${v//,/%2C}"
-          }
-
-          count=0
+          matches=()
           while IFS=: read -r file line text; do
             echo "::warning file=$(esc_prop "$file"),line=${line}::Pattern match: $(esc_data "$text")"
-            count=$((count + 1))
+            matches+=("| $(md_location "$file" "$line") | $(md_cell "${text:0:200}") |")
           done < <(git ls-files -z '*.typ' | xargs -0 -r grep -nE -- "$WARN_PATTERN" /dev/null || true)
-          echo "${count} match(es) for pattern: $WARN_PATTERN"
+          echo "${#matches[@]} match(es) for pattern: $WARN_PATTERN"
           {
             echo ""
-            echo "Warn pattern \`${WARN_PATTERN}\`: ${count} match(es)"
+            echo "### Warn Pattern 🔎"
             echo ""
+            echo "\`$(md_cell "$WARN_PATTERN")\`: ${#matches[@]} match(es)"
           } >> "$GITHUB_STEP_SUMMARY"
+          summary_table "| Location | Text |" "${matches[@]}"
 
+      # Own download instead of typstyle-rs/typstyle-action: that one builds a Docker image on every run,
+      # pins an older typstyle inside its Dockerfile and passes only a single option and path.
       # https://github.com/typstyle-rs/typstyle
       - name: Install Typstyle 📦🛠️
         id: install-typstyle
@@ -417,20 +463,13 @@ jobs:
       # Check formatting of Typst files with typstyle
       - name: Check Typst Formatting 🎨🔍
         id: typstyle-check
-        if: ${{ !cancelled() && steps.install-typstyle.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.helpers.outcome == 'success' && steps.install-typstyle.outcome == 'success' }}
         env:
           FORMAT_PATHS: ${{ inputs.format_paths }}
           SEPARATOR: ${{ inputs.separator }}
         run: |
-          # Split list input at separator, trim whitespace, drop empty items.
-          split() {
-            local item
-            while IFS= read -r item; do
-              item="${item#"${item%%[![:space:]]*}"}"
-              item="${item%"${item##*[![:space:]]}"}"
-              if [ -n "$item" ]; then printf '%s\n' "$item"; fi
-            done <<< "${1//"$SEPARATOR"/$'\n'}"
-          }
+          # shellcheck source=/dev/null
+          source "$RUNNER_TEMP/typst-lint-lib.sh"
           typstyle --version
           mapfile -t paths < <(split "$FORMAT_PATHS")
           typstyle --check "${paths[@]}"

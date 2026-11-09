@@ -236,7 +236,7 @@ jobs:
           fi
 
           printf '%s\0' "${files[@]}" > "$RUNNER_TEMP/typst-files"
-          printf 'Typst file: %s\n' "${files[@]}"
+          for file in "${files[@]}"; do echo "Typst file: $(esc_data "$file")"; done
 
       # Pull only the LFS objects the documents read (images, data) and the fonts, not every binary in the repo
       - name: Pull Git LFS Files 📦⬇️
@@ -251,17 +251,17 @@ jobs:
           # shellcheck source=/dev/null
           source "$RUNNER_TEMP/typst-lint-lib.sh"
 
+          mapfile -t lfs_files < <(git lfs ls-files -n)
+          if [ ${#lfs_files[@]} -eq 0 ]; then
+            echo "No Git LFS files in repository, nothing to pull"
+            exit 0
+          fi
+
           # Detection relies on typst compile --deps, fail clearly instead of silently pulling nothing.
           help="$(typst compile --help)"
           if [[ $help != *"--deps "* ]]; then
             echo "::error::This Typst version has no 'typst compile --deps', use a newer typst_version or set lfs: false"
             exit 1
-          fi
-
-          mapfile -t lfs_files < <(git lfs ls-files -n)
-          if [ ${#lfs_files[@]} -eq 0 ]; then
-            echo "No Git LFS files in repository, nothing to pull"
-            exit 0
           fi
           declare -A is_lfs=()
           for f in "${lfs_files[@]}"; do is_lfs[$f]=1; done
@@ -273,7 +273,7 @@ jobs:
           lfs_pull() {
             local include
             include="$(IFS=,; echo "$*")"
-            printf 'Pull: %s\n' "$@"
+            for f in "$@"; do echo "Pull: $(esc_data "$f")"; done
             git -c "http.${GITHUB_SERVER_URL}/.extraheader=AUTHORIZATION: basic ${auth}" \
               lfs pull --include="$include"
             for f in "$@"; do pulled[$f]=1; done
@@ -436,12 +436,13 @@ jobs:
             exit 1
           fi
 
+          # grep -Z ends the file name with NUL instead of ":", so paths may contain ":" themselves.
           matches=()
-          while IFS=: read -r file line text; do
+          while IFS= read -r -d '' file && IFS=: read -r line text; do
             echo "::warning file=$(esc_prop "$file"),line=${line}::Pattern match: $(esc_data "$text")"
             matches+=("| $(md_location "$file" "$line") | $(md_cell "${text:0:200}") |")
-          done < <(git ls-files -z '*.typ' | xargs -0 -r grep -nE -- "$WARN_PATTERN" /dev/null || true)
-          echo "${#matches[@]} match(es) for pattern: $WARN_PATTERN"
+          done < <(git ls-files -z '*.typ' | xargs -0 -r grep -nZE -- "$WARN_PATTERN" /dev/null || true)
+          echo "${#matches[@]} match(es) for pattern: $(esc_data "$WARN_PATTERN")"
           {
             echo ""
             echo "### Warn Pattern 🔎"
@@ -487,21 +488,23 @@ jobs:
             echo "::error::No files match format_paths: $(esc_data "$FORMAT_PATHS")"
             exit 1
           fi
-          printf 'Format check: %s\n' "${paths[@]}"
+          for path in "${paths[@]}"; do echo "Format check: $(esc_data "$path")"; done
 
           args=(--diff)
           if [ -n "$FORMAT_LINE_WIDTH" ]; then
             args+=(--line-width "$FORMAT_LINE_WIDTH")
           fi
 
+          # Diff (stdout) and messages (stderr) apart, so warnings never end up in the diff parser.
           rc=0
-          output="$(typstyle "${args[@]}" "${paths[@]}" 2>&1)" || rc=$?
+          output="$(typstyle "${args[@]}" "${paths[@]}" 2> "$RUNNER_TEMP/typstyle.err")" || rc=$?
 
           # The diff contains repository content, it must not run as workflow commands.
-          if [ -n "$output" ]; then
+          if [ -n "$output" ] || [ -s "$RUNNER_TEMP/typstyle.err" ]; then
             stop_token="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
             echo "::stop-commands::${stop_token}"
-            printf '%s\n' "$output"
+            if [ -n "$output" ]; then printf '%s\n' "$output"; fi
+            cat "$RUNNER_TEMP/typstyle.err"
             echo "::${stop_token}::"
           fi
 
@@ -529,7 +532,7 @@ jobs:
               if [ "$in_change" -eq 0 ]; then
                 in_change=1
                 echo "::error file=$(esc_prop "$file"),line=${old_line}::Not formatted with typstyle, see the diff in the log"
-                changes+=("| $(md_location "$file" "$old_line") |")
+                changes+=("| $(md_location "$file" "$old_line") | Not formatted |")
               fi
               if [[ $line == "-"* ]]; then old_line=$((old_line + 1)); fi
             elif [[ -n $file && $line == " "* ]]; then
@@ -539,16 +542,33 @@ jobs:
             previous="$line"
           done <<< "$output"
 
+          # typstyle skips a file it cannot parse with only a warning and exit code 0, it must fail too.
+          unparsable=0
+          while IFS= read -r line; do
+            if [[ $line =~ ^warn:\ Failed\ to\ parse\ (.+)\.\ The\ source\ is\ erroneous ]]; then
+              unparsable=$((unparsable + 1))
+              echo "::error file=$(esc_prop "${BASH_REMATCH[1]}")::typstyle cannot parse this file, see the Typst errors"
+              changes+=("| $(md_location "${BASH_REMATCH[1]}") | Cannot be parsed |")
+            fi
+          done < "$RUNNER_TEMP/typstyle.err"
+
           {
             echo ""
             echo "### Typst Formatting 🎨"
             echo ""
-            echo "typstyle on ${#paths[@]} path(s): ${#changes[@]} unformatted section(s)"
+            echo "typstyle on ${#paths[@]} path(s): $(( ${#changes[@]} - unparsable )) unformatted section(s), ${unparsable} unparsable file(s)"
           } >> "$GITHUB_STEP_SUMMARY"
-          summary_table "| Location |" "${changes[@]}"
+          summary_table "| Location | Problem |" "${changes[@]}"
 
-          if [ "$rc" -ne 0 ]; then
+          # Exit code 1 = files not formatted, anything else (e.g. invalid option) = typstyle itself failed.
+          if [ "$rc" -eq 1 ]; then
             fix=(typstyle -i "${args[@]:1}" "<files>")
             echo "::error::Typst files are not formatted, run: ${fix[*]}"
+            exit 1
+          elif [ "$rc" -ne 0 ]; then
+            echo "::error::typstyle failed with exit code ${rc}, see the log"
+            exit 1
+          elif [ "$unparsable" -gt 0 ]; then
+            echo "::error::${unparsable} file(s) cannot be parsed by typstyle"
             exit 1
           fi

@@ -462,7 +462,7 @@ jobs:
           TYPSTYLE_VERSION: ${{ inputs.typstyle_version }}
         run: |
           mkdir -p "$RUNNER_TEMP/bin"
-          curl -fsSL -o "$RUNNER_TEMP/bin/typstyle" \
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/bin/typstyle" \
             "https://github.com/typstyle-rs/typstyle/releases/download/v${TYPSTYLE_VERSION}/typstyle-x86_64-unknown-linux-gnu"
           if [ -n "$TYPSTYLE_SHA256" ]; then
             echo "${TYPSTYLE_SHA256}  $RUNNER_TEMP/bin/typstyle" | sha256sum -c -

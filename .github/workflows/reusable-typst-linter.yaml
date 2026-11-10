@@ -10,6 +10,11 @@ on:
         required: false
         default: false
         type: boolean
+      check_script:
+        description: 'Typst file in root with findings() returning dictionaries (message, optional title, file, line), run per file with sys.inputs.entry; findings are warnings, empty = off'
+        required: false
+        default: ''
+        type: string
       fail_on_warnings:
         description: 'Treat Typst compiler warnings as errors'
         required: false
@@ -415,6 +420,96 @@ jobs:
           fi
           if [ "$FAIL_ON_WARNINGS" = "true" ] && [ "$warnings" -gt 0 ]; then
             echo "::error::${warnings} warning(s), fail_on_warnings is enabled"
+            exit 1
+          fi
+
+      # Content checks of the repository itself (e.g. figures without reference), findings as warnings only.
+      # Runs only if every file compiled, a compile error would only repeat as a failing check.
+      - name: Run Check Script 🔎📑
+        id: check-script
+        if: ${{ !cancelled() && steps.typst-linter.outcome == 'success' && inputs.check_script != '' }}
+        env:
+          CHECK_SCRIPT: ${{ inputs.check_script }}
+          FONT_PATHS: ${{ inputs.font_paths }}
+          ROOT: ${{ inputs.root }}
+          SEPARATOR: ${{ inputs.separator }}
+        run: |
+          # shellcheck source=/dev/null
+          source "$RUNNER_TEMP/typst-lint-lib.sh"
+
+          font_args=()
+          mapfile -t font_dirs < <(split "$FONT_PATHS")
+          for dir in "${font_dirs[@]}"; do
+            font_args+=(--font-path "$dir")
+          done
+
+          # Typst only reads files inside the root, paths are passed root-relative with a leading "/".
+          root_abs="$(realpath "$ROOT")"
+          script_abs="$(realpath -m "$CHECK_SCRIPT")"
+          if [ ! -f "$script_abs" ]; then
+            echo "::error::check_script not found: $(esc_data "$CHECK_SCRIPT")"
+            exit 1
+          fi
+          if [[ $script_abs != "$root_abs"/* ]]; then
+            echo "::error::check_script must be inside root: $(esc_data "$CHECK_SCRIPT")"
+            exit 1
+          fi
+          script_path="/${script_abs#"$root_abs"/}"
+
+          mapfile -d '' -t files < "$RUNNER_TEMP/typst-files"
+          stop_token="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+          failed=0
+          rows=()
+          for file in "${files[@]}"; do
+            entry_abs="$(realpath "$file")"
+            entry_path="/${entry_abs#"$root_abs"/}"
+            rc=0
+            json="$(typst eval --root "$ROOT" "${font_args[@]}" --in "$file" \
+              --input "checks=${script_path}" --input "entry=${entry_path}" \
+              'import sys.inputs.checks: findings; findings()' 2> "$RUNNER_TEMP/check.err")" || rc=$?
+            if [ "$rc" -ne 0 ] || ! jq -e 'type == "array" and all(.[]; type == "object" and (.message | type) == "string")' \
+              <<< "$json" > /dev/null 2>&1; then
+              echo "::error title=$(esc_prop "$file")::check_script failed or returned no array of findings, see the log"
+              # Typst output quotes repository content, it must not run as workflow commands.
+              echo "::stop-commands::${stop_token}"
+              cat "$RUNNER_TEMP/check.err"
+              printf '%s\n' "$json"
+              echo "::${stop_token}::"
+              failed=$((failed + 1))
+              continue
+            fi
+
+            count=0
+            # One finding per line, fields split by the unit separator (not whitespace, empty fields stay)
+            while IFS=$'\x1f' read -r title message finding_file line; do
+              count=$((count + 1))
+              # Typst paths are relative to the root, GitHub annotations to the repository
+              if [ -n "$finding_file" ]; then
+                finding_file="$(realpath -m --relative-to=. "${root_abs}/${finding_file}")"
+                props="file=$(esc_prop "$finding_file")"
+                if [[ $line =~ ^[0-9]+$ ]]; then props="${props},line=${line}"; fi
+                location="$(md_location "$finding_file" "$line")"
+              else
+                props="file=$(esc_prop "$file")"
+                location="$(md_location "$file")"
+              fi
+              echo "::warning ${props},title=$(esc_prop "$title")::$(esc_data "$message")"
+              rows+=("| ${location} | $(md_cell "$title") | $(md_cell "$message") |")
+            done < <(jq -r '.[] | [(.title // "Check"), .message, (.file // ""), (.line // "")]
+              | map(tostring | gsub("[\u001f\r\n]"; " ")) | join("\u001f")' <<< "$json")
+            echo "$(esc_data "$file"): ${count} finding(s)"
+          done
+
+          {
+            echo ""
+            echo "### Check Script 🔎"
+            echo ""
+            echo "\`$(md_cell "$CHECK_SCRIPT")\` on ${#files[@]} file(s): ${#rows[@]} finding(s), ${failed} failed"
+          } >> "$GITHUB_STEP_SUMMARY"
+          summary_table "| Location | Check | Message |" "${rows[@]}"
+
+          if [ "$failed" -gt 0 ]; then
+            echo "::error::check_script failed for ${failed} file(s)"
             exit 1
           fi
 

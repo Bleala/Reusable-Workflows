@@ -5,6 +5,36 @@ run-name: Lint Typst Files 📑🔍
 on:
   workflow_call:
     inputs:
+      artifact_name:
+        description: 'Name of the artifact with the files of build_script'
+        required: false
+        default: 'typst-documents'
+        type: string
+      artifact_retention_days:
+        description: 'Days GitHub keeps the artifact of build_script'
+        required: false
+        default: 7
+        type: number
+      build_args:
+        description: 'Arguments for build_script (split by separator)'
+        required: false
+        default: ''
+        type: string
+      build_output:
+        description: 'Glob expression(s) of the files build_script writes, only files written by the script are uploaded'
+        required: false
+        default: '**/*.pdf'
+        type: string
+      build_script:
+        description: 'Executable script in the repository that builds the documents, run from the repository root after the lint succeeded, output uploaded as artifact; empty = off'
+        required: false
+        default: ''
+        type: string
+      build_timezone:
+        description: 'Time zone (TZ) for build_script, e.g. Europe/Vienna for dates derived from commit times; empty = runner default (UTC)'
+        required: false
+        default: ''
+        type: string
       check_format:
         description: 'Check formatting with typstyle (fails on unformatted files)'
         required: false
@@ -214,6 +244,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref }}
+          # Full history only for build_script (e.g. date of the last commit of a document), else shallow.
+          # Written as "== '' && 1 || 0", because 0 is falsy and "!= '' && 0 || 1" would always give 1.
+          fetch-depth: ${{ inputs.build_script == '' && 1 || 0 }}
           persist-credentials: false
           token: ${{ secrets.GITHUB_WORKFLOW_TOKEN }}
 
@@ -512,6 +545,82 @@ jobs:
             echo "::error::check_script failed for ${failed} file(s)"
             exit 1
           fi
+
+      # Build the documents with the repository's own script (same file names and options as locally),
+      # only if every file compiled. Uploads only files the script writes, not committed ones matching the glob.
+      - name: Build Documents 📑🏗️
+        id: build
+        if: ${{ !cancelled() && steps.typst-linter.outcome == 'success' && inputs.build_script != '' }}
+        env:
+          BUILD_ARGS: ${{ inputs.build_args }}
+          BUILD_OUTPUT: ${{ inputs.build_output }}
+          BUILD_SCRIPT: ${{ inputs.build_script }}
+          BUILD_TIMEZONE: ${{ inputs.build_timezone }}
+          RETENTION_DAYS: ${{ inputs.artifact_retention_days }}
+          SEPARATOR: ${{ inputs.separator }}
+        run: |
+          # shellcheck source=/dev/null
+          source "$RUNNER_TEMP/typst-lint-lib.sh"
+
+          if [ ! -f "$BUILD_SCRIPT" ] || [ ! -x "$BUILD_SCRIPT" ]; then
+            echo "::error::build_script not found or not executable (git update-index --chmod=+x): $(esc_data "$BUILD_SCRIPT")"
+            exit 1
+          fi
+          script="$(realpath "$BUILD_SCRIPT")"
+          mapfile -t args < <(split "$BUILD_ARGS")
+          if [ -n "$BUILD_TIMEZONE" ]; then export TZ="$BUILD_TIMEZONE"; fi
+
+          marker="$RUNNER_TEMP/build-start"
+          touch "$marker"
+          # Script output quotes repository content, it must not run as workflow commands.
+          stop_token="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+          echo "::stop-commands::${stop_token}"
+          rc=0
+          "$script" ${args[@]+"${args[@]}"} || rc=$?
+          echo "::${stop_token}::"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::build_script failed with exit code ${rc}"
+            exit 1
+          fi
+
+          built=()
+          rows=()
+          while IFS= read -r -d '' file; do
+            if [ -f "$file" ] && [ "$file" -nt "$marker" ]; then
+              built+=("$file")
+              rows+=("| $(md_cell "$file") | $(( ($(stat -c %s "$file") + 1023) / 1024 )) KiB |")
+            fi
+          done < <(expand_globs "$BUILD_OUTPUT")
+          if [ ${#built[@]} -eq 0 ]; then
+            echo "::error::build_script wrote no file matching build_output: $(esc_data "$BUILD_OUTPUT")"
+            exit 1
+          fi
+          for file in "${built[@]}"; do echo "Built: $(esc_data "$file")"; done
+
+          delimiter="EOF_$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+          {
+            echo "files<<${delimiter}"
+            printf '%s\n' "${built[@]}"
+            echo "${delimiter}"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo ""
+            echo "### Build 🏗️"
+            echo ""
+            echo "\`$(md_cell "$BUILD_SCRIPT")\` built ${#built[@]} file(s), artifact kept for ${RETENTION_DAYS} day(s)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          summary_table "| File | Size |" "${rows[@]}"
+
+      # https://github.com/marketplace/actions/upload-a-build-artifact
+      - name: Upload Documents 📦⬆️
+        id: upload
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: ${{ steps.build.outputs.files }}
+          if-no-files-found: error
+          retention-days: ${{ inputs.artifact_retention_days }}
 
       # Report matches (e.g. open #todo) as annotations only
       - name: Check Warn Patterns 🔎📝

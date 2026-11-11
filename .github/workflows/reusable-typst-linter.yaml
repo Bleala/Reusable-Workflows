@@ -865,7 +865,9 @@ jobs:
               continue
             fi
             built+=("$file")
-            rows+=("| $(md_cell "$file") | $(( ($(stat -c %s "$file") + 1023) / 1024 )) KiB |")
+            # Binary units like file managers (13.0 MiB), small files in KiB
+            size="$(awk -v b="$(stat -c %s "$file")" 'BEGIN { if (b >= 1023 * 1024) printf "%.1f MiB", b / 1048576; else printf "%.0f KiB", b / 1024 }')"
+            rows+=("| $(md_cell "$file") | ${size} |")
           done < <(expand_globs "$BUILD_OUTPUT")
           if [ ${#built[@]} -eq 0 ]; then
             echo "::error::build_script wrote no file matching build_output: $(esc_data "$BUILD_OUTPUT")"

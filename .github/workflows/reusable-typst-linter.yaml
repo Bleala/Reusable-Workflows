@@ -1,6 +1,6 @@
 ---
-name: Reusable - Lint Typst Files 📑🔍
-run-name: Lint Typst Files 📑🔍
+name: Reusable - Lint & Build Typst Files 📑🔍🏗️
+run-name: Lint & Build Typst Files 📑🔍🏗️
 
 on:
   workflow_call:
@@ -131,7 +131,7 @@ on:
 
 jobs:
   lint-typst-files:
-    name: Lint Typst Files 📑🔍
+    name: Lint & Build Typst Files 📑🔍🏗️
     runs-on: ubuntu-latest
     # A document stuck in an endless loop must not burn the default 6 hours
     timeout-minutes: 15

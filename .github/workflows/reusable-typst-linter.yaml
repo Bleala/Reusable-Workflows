@@ -557,7 +557,9 @@ jobs:
             echo ""
             echo "### Check Script 🔎"
             echo ""
-            echo "\`$(md_cell "$CHECK_SCRIPT")\` on ${#files[@]} file(s): ${#rows[@]} finding(s), ${failed} failed"
+            echo "| Script | Files | Findings | Failed |"
+            echo "| --- | --- | --- | --- |"
+            echo "| \`$(md_cell "$CHECK_SCRIPT")\` | ${#files[@]} | ${#rows[@]} | ${failed} |"
           } >> "$GITHUB_STEP_SUMMARY"
           summary_table "| Location | Check | Message |" "${rows[@]}"
 
@@ -707,7 +709,9 @@ jobs:
             echo ""
             echo "### Typst Formatting 🎨"
             echo ""
-            echo "typstyle on ${#paths[@]} path(s): $(( ${#changes[@]} - unparsable )) unformatted section(s), ${unparsable} unparsable file(s)"
+            echo "| Paths | Unformatted Sections | Unparsable Files |"
+            echo "| --- | --- | --- |"
+            echo "| ${#paths[@]} | $(( ${#changes[@]} - unparsable )) | ${unparsable} |"
           } >> "$GITHUB_STEP_SUMMARY"
           summary_table "| Location | Problem |" "${changes[@]}"
 
@@ -885,7 +889,9 @@ jobs:
             echo ""
             echo "### Build 🏗️"
             echo ""
-            echo "\`$(md_cell "$BUILD_SCRIPT")\` built ${#built[@]} file(s) ($(md_cell "$reason")), artifact kept for ${RETENTION_DAYS} day(s)"
+            echo "| Script | Built | Reason | Artifact Kept |"
+            echo "| --- | --- | --- | --- |"
+            echo "| \`$(md_cell "$BUILD_SCRIPT")\` | ${#built[@]} | $(md_cell "$reason") | ${RETENTION_DAYS} day(s) |"
           } >> "$GITHUB_STEP_SUMMARY"
           summary_table "| File | Size |" "${rows[@]}"
 

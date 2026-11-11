@@ -16,7 +16,17 @@ on:
         default: 7
         type: number
       build_args:
-        description: 'Arguments for build_script (split by separator)'
+        description: 'Arguments for build_script (split by separator), the script gets them followed by the Typst files to build'
+        required: false
+        default: ''
+        type: string
+      build_base:
+        description: 'Commit to compare with (e.g. github.event.before): build only the files whose typst dependencies changed, all if the build script, font_paths or the calling workflow changed; empty or unknown commit = all'
+        required: false
+        default: ''
+        type: string
+      build_files:
+        description: 'Paths or glob expressions (split by separator) choosing the files to build, a folder selects every file below it; overrides build_base, empty = off'
         required: false
         default: ''
         type: string
@@ -399,9 +409,19 @@ jobs:
           # The path may contain ":" itself, backtracking finds the last ":line:col: ".
           regex='^((.+):([0-9]+):([0-9]+): )?(error|warning): (.*)$'
 
-          for file in "${files[@]}"; do
+          # Dependencies of every file (deps/<index>), build_base uses them to find the documents a change affects
+          mkdir -p "$RUNNER_TEMP/deps"
+          deps_supported=0
+          if [[ $(typst compile --help) == *"--deps "* ]]; then deps_supported=1; fi
+
+          for index in "${!files[@]}"; do
+            file="${files[$index]}"
+            deps_args=()
+            if [ "$deps_supported" -eq 1 ]; then
+              deps_args=(--deps "$RUNNER_TEMP/deps/${index}" --deps-format zero)
+            fi
             echo "::group::$(esc_data "$file")"
-            output="$(typst compile --root "$ROOT" "${font_args[@]}" "${standard_args[@]}" \
+            output="$(typst compile --root "$ROOT" "${font_args[@]}" "${standard_args[@]}" "${deps_args[@]}" \
               --diagnostic-format short "$file" "$RUNNER_TEMP/lint.pdf" 2>&1)" || failed=$((failed + 1))
 
             if [ -n "$output" ]; then
@@ -545,82 +565,6 @@ jobs:
             echo "::error::check_script failed for ${failed} file(s)"
             exit 1
           fi
-
-      # Build the documents with the repository's own script (same file names and options as locally),
-      # only if every file compiled. Uploads only files the script writes, not committed ones matching the glob.
-      - name: Build Documents 📑🏗️
-        id: build
-        if: ${{ !cancelled() && steps.typst-linter.outcome == 'success' && inputs.build_script != '' }}
-        env:
-          BUILD_ARGS: ${{ inputs.build_args }}
-          BUILD_OUTPUT: ${{ inputs.build_output }}
-          BUILD_SCRIPT: ${{ inputs.build_script }}
-          BUILD_TIMEZONE: ${{ inputs.build_timezone }}
-          RETENTION_DAYS: ${{ inputs.artifact_retention_days }}
-          SEPARATOR: ${{ inputs.separator }}
-        run: |
-          # shellcheck source=/dev/null
-          source "$RUNNER_TEMP/typst-lint-lib.sh"
-
-          if [ ! -f "$BUILD_SCRIPT" ] || [ ! -x "$BUILD_SCRIPT" ]; then
-            echo "::error::build_script not found or not executable (git update-index --chmod=+x): $(esc_data "$BUILD_SCRIPT")"
-            exit 1
-          fi
-          script="$(realpath "$BUILD_SCRIPT")"
-          mapfile -t args < <(split "$BUILD_ARGS")
-          if [ -n "$BUILD_TIMEZONE" ]; then export TZ="$BUILD_TIMEZONE"; fi
-
-          marker="$RUNNER_TEMP/build-start"
-          touch "$marker"
-          # Script output quotes repository content, it must not run as workflow commands.
-          stop_token="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-          echo "::stop-commands::${stop_token}"
-          rc=0
-          "$script" ${args[@]+"${args[@]}"} || rc=$?
-          echo "::${stop_token}::"
-          if [ "$rc" -ne 0 ]; then
-            echo "::error::build_script failed with exit code ${rc}"
-            exit 1
-          fi
-
-          built=()
-          rows=()
-          while IFS= read -r -d '' file; do
-            if [ -f "$file" ] && [ "$file" -nt "$marker" ]; then
-              built+=("$file")
-              rows+=("| $(md_cell "$file") | $(( ($(stat -c %s "$file") + 1023) / 1024 )) KiB |")
-            fi
-          done < <(expand_globs "$BUILD_OUTPUT")
-          if [ ${#built[@]} -eq 0 ]; then
-            echo "::error::build_script wrote no file matching build_output: $(esc_data "$BUILD_OUTPUT")"
-            exit 1
-          fi
-          for file in "${built[@]}"; do echo "Built: $(esc_data "$file")"; done
-
-          delimiter="EOF_$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-          {
-            echo "files<<${delimiter}"
-            printf '%s\n' "${built[@]}"
-            echo "${delimiter}"
-          } >> "$GITHUB_OUTPUT"
-          {
-            echo ""
-            echo "### Build 🏗️"
-            echo ""
-            echo "\`$(md_cell "$BUILD_SCRIPT")\` built ${#built[@]} file(s), artifact kept for ${RETENTION_DAYS} day(s)"
-          } >> "$GITHUB_STEP_SUMMARY"
-          summary_table "| File | Size |" "${rows[@]}"
-
-      # https://github.com/marketplace/actions/upload-a-build-artifact
-      - name: Upload Documents 📦⬆️
-        id: upload
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: ${{ inputs.artifact_name }}
-          path: ${{ steps.build.outputs.files }}
-          if-no-files-found: error
-          retention-days: ${{ inputs.artifact_retention_days }}
 
       # Report matches (e.g. open #todo) as annotations only
       - name: Check Warn Patterns 🔎📝
@@ -779,3 +723,177 @@ jobs:
             echo "::error::${unparsable} file(s) cannot be parsed by typstyle"
             exit 1
           fi
+
+      # Build the documents with the repository's own script (same file names and options as locally) and
+      # upload them. Last steps on purpose: unlike typst (sandboxed), the script is arbitrary repository code
+      # and must not be able to change the results of the checks above. Never call this workflow with
+      # pull_request_target on code from forks.
+      - name: Build Documents 📑🏗️
+        id: build
+        if: ${{ !cancelled() && steps.typst-linter.outcome == 'success' && inputs.build_script != '' }}
+        env:
+          BUILD_ARGS: ${{ inputs.build_args }}
+          BUILD_BASE: ${{ inputs.build_base }}
+          BUILD_FILES: ${{ inputs.build_files }}
+          BUILD_OUTPUT: ${{ inputs.build_output }}
+          BUILD_SCRIPT: ${{ inputs.build_script }}
+          BUILD_TIMEZONE: ${{ inputs.build_timezone }}
+          FONT_PATHS: ${{ inputs.font_paths }}
+          RETENTION_DAYS: ${{ inputs.artifact_retention_days }}
+          SEPARATOR: ${{ inputs.separator }}
+        run: |
+          # shellcheck source=/dev/null
+          source "$RUNNER_TEMP/typst-lint-lib.sh"
+
+          # pull_request_target runs with the base repository's permissions and secrets, the script could
+          # come from an untrusted fork
+          if [ "$GITHUB_EVENT_NAME" = "pull_request_target" ]; then
+            echo "::error::build_script must not run on pull_request_target, use pull_request instead"
+            exit 1
+          fi
+          if [ ! -f "$BUILD_SCRIPT" ] || [ ! -x "$BUILD_SCRIPT" ]; then
+            echo "::error::build_script not found or not executable (git update-index --chmod=+x): $(esc_data "$BUILD_SCRIPT")"
+            exit 1
+          fi
+          script="$(realpath "$BUILD_SCRIPT")"
+          mapfile -t args < <(split "$BUILD_ARGS")
+          if [ -n "$BUILD_TIMEZONE" ]; then export TZ="$BUILD_TIMEZONE"; fi
+
+          # Which entry files to build: build_files (manual choice), else the ones build_base changes affect,
+          # else all. Paths are compared without a leading "./".
+          mapfile -d '' -t files < "$RUNNER_TEMP/typst-files"
+          selected=()
+          reason="all ${#files[@]} file(s)"
+          base=""
+          if [ -n "$BUILD_BASE" ]; then
+            base="$(git rev-parse --verify --quiet --end-of-options "${BUILD_BASE}^{commit}" 2> /dev/null || true)"
+          fi
+          if [ -n "$BUILD_FILES" ]; then
+            # A path selects the entry file itself or every entry file below it (e.g. a lab or course folder)
+            mapfile -d '' -t picks < <(expand_globs "$BUILD_FILES")
+            for file in "${files[@]}"; do
+              for pick in "${picks[@]}"; do
+                pick="${pick#./}"
+                pick="${pick%/}"
+                if [ "${file#./}" = "$pick" ] || [[ ${file#./} == "$pick"/* ]]; then
+                  selected+=("$file")
+                  break
+                fi
+              done
+            done
+            if [ ${#selected[@]} -eq 0 ]; then
+              echo "::error::build_files matches none of the Typst files: $(esc_data "$BUILD_FILES")"
+              exit 1
+            fi
+            reason="build_files: $BUILD_FILES"
+          elif [ -n "$base" ]; then
+            declare -A changed=()
+            while IFS= read -r -d '' path; do changed[$path]=1; done \
+              < <(git diff --name-only --no-renames -z "$base" HEAD --)
+            # Changes typst does not list as dependency but that affect every document: build script,
+            # fonts and the calling workflow (e.g. other build options)
+            shared=""
+            workflow="${GITHUB_WORKFLOW_REF%@*}"
+            workflow="${workflow#"$GITHUB_REPOSITORY"/}"
+            mapfile -t font_dirs < <(split "$FONT_PATHS")
+            for path in "${!changed[@]}"; do
+              if [ "$path" = "$(realpath --relative-to=. "$script")" ] || [ "$path" = "$workflow" ]; then shared="$path"; fi
+              for dir in "${font_dirs[@]}"; do
+                dir="${dir#./}"
+                dir="${dir%/}"
+                if [[ $path == "$dir"/* ]]; then shared="$path"; fi
+              done
+            done
+            if [ -n "$shared" ]; then
+              reason="all ${#files[@]} file(s), shared file changed since ${base:0:7}: $shared"
+            else
+              for index in "${!files[@]}"; do
+                deps="$RUNNER_TEMP/deps/${index}"
+                # Without dependency list (old typst) the file is built, better too much than missing
+                if [ ! -f "$deps" ]; then
+                  selected+=("${files[$index]}")
+                  continue
+                fi
+                while IFS= read -r -d '' dep; do
+                  if [ -n "${changed[${dep#./}]:-}" ]; then
+                    selected+=("${files[$index]}")
+                    break
+                  fi
+                done < "$deps"
+              done
+              reason="${#selected[@]} of ${#files[@]} file(s) changed since ${base:0:7}"
+              if [ ${#selected[@]} -eq 0 ]; then
+                echo "::notice::No document changed since ${base:0:7}, nothing to build"
+                {
+                  echo ""
+                  echo "### Build 🏗️"
+                  echo ""
+                  echo "No document changed since \`${base:0:7}\`, nothing built (start the workflow manually to build all)"
+                } >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+              fi
+            fi
+          elif [ -n "$BUILD_BASE" ]; then
+            reason="all ${#files[@]} file(s), build_base is no commit in the history (new branch or force push)"
+          fi
+          if [ ${#selected[@]} -eq 0 ]; then selected=("${files[@]}"); fi
+          echo "Build $(esc_data "$reason"):"
+          for file in "${selected[@]}"; do echo "  $(esc_data "$file")"; done
+
+          # Only files written after this marker are uploaded, not committed files that match the glob too.
+          marker="$RUNNER_TEMP/build-start"
+          touch "$marker"
+          sleep 1
+          # Script output quotes repository content, it must not run as workflow commands.
+          stop_token="$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+          echo "::stop-commands::${stop_token}"
+          rc=0
+          "$script" ${args[@]+"${args[@]}"} "${selected[@]}" || rc=$?
+          echo "::${stop_token}::"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::build_script failed with exit code ${rc}"
+            exit 1
+          fi
+
+          built=()
+          rows=()
+          while IFS= read -r -d '' file; do
+            if [ ! -f "$file" ] || [ ! "$file" -nt "$marker" ]; then continue; fi
+            # upload-artifact reads its path list line by line as glob patterns, "!" excludes
+            if [[ $file == *$'\n'* || $file == !* || $file == *[*?[]* ]]; then
+              echo "::warning::Not uploaded, file name not usable as upload-artifact path: $(esc_data "$file")"
+              continue
+            fi
+            built+=("$file")
+            rows+=("| $(md_cell "$file") | $(( ($(stat -c %s "$file") + 1023) / 1024 )) KiB |")
+          done < <(expand_globs "$BUILD_OUTPUT")
+          if [ ${#built[@]} -eq 0 ]; then
+            echo "::error::build_script wrote no file matching build_output: $(esc_data "$BUILD_OUTPUT")"
+            exit 1
+          fi
+          for file in "${built[@]}"; do echo "Built: $(esc_data "$file")"; done
+
+          delimiter="EOF_$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+          {
+            echo "files<<${delimiter}"
+            printf '%s\n' "${built[@]}"
+            echo "${delimiter}"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo ""
+            echo "### Build 🏗️"
+            echo ""
+            echo "\`$(md_cell "$BUILD_SCRIPT")\` built ${#built[@]} file(s) ($(md_cell "$reason")), artifact kept for ${RETENTION_DAYS} day(s)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          summary_table "| File | Size |" "${rows[@]}"
+
+      # https://github.com/marketplace/actions/upload-a-build-artifact
+      - name: Upload Documents 📦⬆️
+        id: upload
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.build.outputs.files != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: ${{ steps.build.outputs.files }}
+          if-no-files-found: error
+          retention-days: ${{ inputs.artifact_retention_days }}

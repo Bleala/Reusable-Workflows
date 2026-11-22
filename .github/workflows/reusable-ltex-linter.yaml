@@ -351,7 +351,10 @@ jobs:
             jq -n '$ARGS.positional' --args "${kept[@]}"
           }
 
-          config="$(jq -n --arg language "$LANGUAGE" '{language: $language}')"
+          # ltex-cli-plus never reads the stderr pipe of its ltex-ls-plus server. With the default log level
+          # "fine" the server logs every checked text there, blocks once the 64 KiB pipe buffer is full and
+          # the check hangs until the timeout (tested with 18.7.0). "warning" keeps the log small.
+          config="$(jq -n --arg language "$LANGUAGE" '{language: $language, "ltex-ls": {logLevel: "warning"}}')"
           mapfile -t enabled < <(split "$LTEX_ENABLED")
           if [ ${#enabled[@]} -gt 0 ]; then
             config="$(jq '.enabled = $ARGS.positional' --args "${enabled[@]}" <<< "$config")"
